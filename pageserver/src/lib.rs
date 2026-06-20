@@ -13,6 +13,8 @@
 //! * [`server`] — the page-service and ingest network endpoints.
 //! * [`waldecode`] — PostgreSQL WAL stream framing + record decoding (Phase 1 of
 //!   the WAL decode/redo subsystem; see `docs/design/wal-redo.md`).
+//! * [`walredo`] — reconstructs a page from its version history (Phase 2): a
+//!   native Rust apply backend, with a Postgres wal-redo backend to follow.
 
 pub mod layer;
 pub mod objstore;
@@ -21,13 +23,15 @@ pub mod page;
 pub mod repository;
 pub mod server;
 pub mod waldecode;
+pub mod walredo;
 
 pub use layer::{Layer, LayerId};
 pub use objstore::{LocalObjectStore, ObjectStore};
-pub use page::{ByteEdit, Modification, PageVersion};
+pub use page::{ByteEdit, Modification, PageVersion, WalRecord};
 pub use repository::{PageLookup, Repository};
 pub use server::{serve_ingest, serve_pages};
 pub use waldecode::{
     decode_wal_record, Compression, DecodedBlock, DecodedImage, DecodedWalRecord, WalDecodeError,
     WalStreamDecoder,
 };
+pub use walredo::{RedoError, RustApplyRedoManager, WalRedoManager};

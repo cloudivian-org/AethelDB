@@ -26,6 +26,21 @@ pub struct ByteEdit {
     pub data: Vec<u8>,
 }
 
+/// A raw PostgreSQL WAL record addressed to one page.
+///
+/// Unlike [`ByteEdit`] deltas, a WAL record can only be applied by Postgres's
+/// own resource-manager redo routines (a WAL-redo backend); the page server
+/// stores the record verbatim and replays it at reconstruction time. `will_init`
+/// marks a record that re-initializes the page from scratch, so it serves as a
+/// reconstruction base with no prior image required.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalRecord {
+    /// Whether this record re-initializes the page (a valid base point).
+    pub will_init: bool,
+    /// The raw `XLogRecord` bytes (header + body) for the owning record.
+    pub rec: Vec<u8>,
+}
+
 /// One version of a page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageVersion {
@@ -33,6 +48,8 @@ pub enum PageVersion {
     Image(Vec<u8>),
     /// A set of byte edits applied on top of the previous version.
     Delta(Vec<ByteEdit>),
+    /// A raw WAL record applied by a WAL-redo backend (see [`WalRecord`]).
+    WalRecord(WalRecord),
 }
 
 /// Errors from decoding ingest records or applying deltas.
@@ -46,6 +63,10 @@ pub enum PageError {
     EditOutOfBounds { offset: usize, len: usize },
     #[error("unknown version tag {0}")]
     BadVersionTag(u8),
+    #[error("this page version is a raw WAL record and requires WAL redo to apply")]
+    NeedsRedo,
+    #[error("reconstruction via WAL redo failed: {0}")]
+    Redo(String),
 }
 
 impl PageVersion {
@@ -70,12 +91,25 @@ impl PageVersion {
                 }
                 Ok(())
             }
+            // Raw WAL records cannot be applied here — only a WAL-redo backend,
+            // which understands Postgres's per-rmgr redo, can apply them.
+            PageVersion::WalRecord(_) => Err(PageError::NeedsRedo),
         }
     }
 
     /// Whether this version is a full image (a valid reconstruction base).
     pub fn is_image(&self) -> bool {
         matches!(self, PageVersion::Image(_))
+    }
+
+    /// Whether this version can start a reconstruction with no prior page: a
+    /// full image, or a WAL record flagged `will_init`.
+    pub fn is_base(&self) -> bool {
+        match self {
+            PageVersion::Image(_) => true,
+            PageVersion::WalRecord(w) => w.will_init,
+            PageVersion::Delta(_) => false,
+        }
     }
 }
 
@@ -94,6 +128,7 @@ pub struct Modification {
 
 const TAG_IMAGE: u8 = 0;
 const TAG_DELTA: u8 = 1;
+const TAG_WALRECORD: u8 = 2;
 
 /// Append a `PageVersion` to `buf` (shared by ingest records and layer files).
 pub(crate) fn write_version(buf: &mut Vec<u8>, v: &PageVersion) {
@@ -110,6 +145,12 @@ pub(crate) fn write_version(buf: &mut Vec<u8>, v: &PageVersion) {
                 buf.extend_from_slice(&(e.data.len() as u16).to_be_bytes());
                 buf.extend_from_slice(&e.data);
             }
+        }
+        PageVersion::WalRecord(w) => {
+            buf.push(TAG_WALRECORD);
+            buf.push(w.will_init as u8);
+            buf.extend_from_slice(&(w.rec.len() as u32).to_be_bytes());
+            buf.extend_from_slice(&w.rec);
         }
     }
 }
@@ -139,6 +180,17 @@ pub(crate) fn read_version(buf: &[u8], mut pos: usize) -> Result<(PageVersion, u
                 pos += len;
             }
             Ok((PageVersion::Delta(edits), pos))
+        }
+        TAG_WALRECORD => {
+            let will_init = *buf.get(pos).ok_or(PageError::Truncated("will_init"))? != 0;
+            pos += 1;
+            let len = read_u32(buf, &mut pos)? as usize;
+            if buf.len() < pos + len {
+                return Err(PageError::Truncated("wal record"));
+            }
+            let rec = buf[pos..pos + len].to_vec();
+            pos += len;
+            Ok((PageVersion::WalRecord(WalRecord { will_init, rec }), pos))
         }
         other => Err(PageError::BadVersionTag(other)),
     }

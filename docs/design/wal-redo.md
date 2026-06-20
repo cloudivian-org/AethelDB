@@ -5,8 +5,16 @@ Copyright 2026 The AethelDB Authors
 
 # Design: WAL decode & redo
 
-Status: **Phase 1 complete** — WAL stream framing + record decoder landed
-(`pageserver/src/waldecode.rs`, 10 unit tests). Phases 2–4 below are next.
+Status:
+- **Phase 1 complete** — WAL stream framing + record decoder
+  (`pageserver/src/waldecode.rs`, 10 unit tests).
+- **Phase 2 complete (library)** — `PageVersion::WalRecord` storage variant, the
+  `WalRedoManager` trait + `RustApplyRedoManager` (`pageserver/src/walredo.rs`),
+  reconstruction routed through the redo backend, and `Repository::ingest_wal`
+  feeding real WAL bytes through framing → decode → store → reconstruct. The
+  network `IngestWal` endpoint is deferred to pair with Phase 4's `WalReceiver`.
+- **Phase 3 / 4** — the Postgres wal-redo process and the safekeeper→pageserver
+  receiver are next.
 
 ## Why
 

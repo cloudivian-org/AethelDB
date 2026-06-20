@@ -18,11 +18,13 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use common::{Lsn, PageKey, RelTag, PAGE_SIZE};
+use common::{Lsn, PageKey, RelTag};
 use tracing::debug;
 
 use crate::layer::{Layer, LayerId};
-use crate::page::{Modification, PageError, PageVersion};
+use crate::page::{Modification, PageError, PageVersion, WalRecord};
+use crate::waldecode::{decode_wal_record, DecodedWalRecord, WalDecodeError, WalStreamDecoder};
+use crate::walredo::{RedoError, RustApplyRedoManager, WalRedoManager};
 
 /// Outcome of a page lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,12 +52,21 @@ struct Inner {
 /// The page server's storage repository (thread-safe).
 pub struct Repository {
     inner: Mutex<Inner>,
+    /// Backend that materializes a page from its version history. Stateless and
+    /// `Send + Sync`, so it lives outside the lock.
+    redo: Arc<dyn WalRedoManager>,
 }
 
 impl Repository {
     /// Create an empty repository that freezes the memtable every
-    /// `freeze_threshold` versions.
+    /// `freeze_threshold` versions, using the native Rust apply backend.
     pub fn new(freeze_threshold: usize) -> Arc<Self> {
+        Self::with_redo(freeze_threshold, Arc::new(RustApplyRedoManager))
+    }
+
+    /// Create a repository with an explicit WAL-redo backend (e.g. a Postgres
+    /// wal-redo process in a later phase).
+    pub fn with_redo(freeze_threshold: usize, redo: Arc<dyn WalRedoManager>) -> Arc<Self> {
         Arc::new(Repository {
             inner: Mutex::new(Inner {
                 memtable: BTreeMap::new(),
@@ -65,7 +76,27 @@ impl Repository {
                 next_layer_id: 0,
                 freeze_threshold,
             }),
+            redo,
         })
+    }
+
+    /// Ingest a raw PostgreSQL WAL byte stream beginning at `start_lsn`.
+    ///
+    /// Frames the stream into records, decodes each into its per-page changes,
+    /// and ingests them: a full-page image becomes a [`PageVersion::Image`];
+    /// every other touched block stores the raw record as a
+    /// [`PageVersion::WalRecord`] for a wal-redo backend to apply later.
+    /// Returns the number of WAL records ingested.
+    pub fn ingest_wal(&self, start_lsn: Lsn, wal: &[u8]) -> Result<usize, WalDecodeError> {
+        let mut decoder = WalStreamDecoder::new(start_lsn);
+        decoder.feed_bytes(wal);
+        let mut n = 0;
+        while let Some((lsn, record)) = decoder.poll_decode()? {
+            let decoded = decode_wal_record(lsn, &record)?;
+            self.ingest(modifications_from_record(&decoded, &record));
+            n += 1;
+        }
+        Ok(n)
     }
 
     /// Ingest a batch of page modifications (as a WAL decoder would emit).
@@ -126,17 +157,14 @@ impl Repository {
         }
         versions.sort_by_key(|(l, _)| *l);
 
-        // Find the most recent image, then replay deltas after it.
-        let base = match versions.iter().rposition(|(_, v)| v.is_image()) {
-            Some(i) => i,
-            None => return Ok(PageLookup::NotFound),
-        };
-        let mut page = vec![0u8; PAGE_SIZE];
-        versions[base].1.apply_to(&mut page)?;
-        for (_, v) in &versions[base + 1..] {
-            v.apply_to(&mut page)?;
+        // Hand the ordered history to the redo backend, which knows how to
+        // apply each version kind (images, byte-edits, or real WAL records).
+        match self.redo.reconstruct(key, lsn, &versions) {
+            Ok(Some(page)) => Ok(PageLookup::Page(page)),
+            Ok(None) => Ok(PageLookup::NotFound),
+            Err(RedoError::Apply(e)) => Err(e),
+            Err(e @ RedoError::NeedsPostgres { .. }) => Err(PageError::Redo(e.to_string())),
         }
-        Ok(PageLookup::Page(page))
     }
 
     /// Number of blocks in a relation fork as of `lsn`, if known.
@@ -171,11 +199,32 @@ impl Repository {
     }
 }
 
+/// Map a decoded WAL record to one ingest [`Modification`] per touched block.
+///
+/// A block carrying a restorable full-page image becomes a
+/// [`PageVersion::Image`] (a reconstruction base); every other block — and any
+/// image we can't yet restore (e.g. compressed) — stores the raw record bytes as
+/// a [`PageVersion::WalRecord`] for a wal-redo backend to apply later.
+fn modifications_from_record(decoded: &DecodedWalRecord, raw: &[u8]) -> Vec<Modification> {
+    let mut mods = Vec::with_capacity(decoded.blocks.len());
+    for b in &decoded.blocks {
+        let version = match &b.image {
+            Some(img) => match img.restore() {
+                Ok(page) => PageVersion::Image(page),
+                Err(_) => PageVersion::WalRecord(WalRecord { will_init: b.will_init, rec: raw.to_vec() }),
+            },
+            None => PageVersion::WalRecord(WalRecord { will_init: b.will_init, rec: raw.to_vec() }),
+        };
+        mods.push(Modification { rel: b.rel, block: b.blkno, lsn: decoded.lsn, version });
+    }
+    mods
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::page::{ByteEdit, PageVersion};
-    use common::ForkNumber;
+    use common::{ForkNumber, PAGE_SIZE};
 
     fn rel() -> RelTag {
         RelTag { spc_node: 1, db_node: 2, rel_node: 3, fork: ForkNumber::Main }
@@ -282,5 +331,124 @@ mod tests {
         ]);
         // Two versions reached the threshold of 2 -> one frozen layer.
         assert_eq!(repo.layer_count(), 1);
+    }
+
+    // ---- Real-WAL ingest (Phase 2) ----
+    //
+    // These build format-accurate PG16 WAL bytes and push them through the
+    // public `ingest_wal` path, exercising the framing + decode + redo pipeline
+    // end to end rather than hand-feeding `Modification`s.
+
+    use crate::waldecode::{SIZE_OF_XLOG_LONG_PHD, XLOG_PAGE_MAGIC_PG16};
+
+    /// A long page header at LSN 0 (magic + XLP_LONG_HEADER), rest zeroed.
+    fn long_header() -> Vec<u8> {
+        let mut h = vec![0u8; SIZE_OF_XLOG_LONG_PHD];
+        h[0..2].copy_from_slice(&XLOG_PAGE_MAGIC_PG16.to_le_bytes());
+        h[2..4].copy_from_slice(&0x0002u16.to_le_bytes()); // XLP_LONG_HEADER
+        h
+    }
+
+    /// Wrap a record body in a 24-byte XLogRecord header with a valid length.
+    fn xlog_record(rmid: u8, body: &[u8]) -> Vec<u8> {
+        let tot = 24 + body.len();
+        let mut r = Vec::with_capacity(tot);
+        r.extend_from_slice(&(tot as u32).to_le_bytes()); // xl_tot_len
+        r.extend_from_slice(&0u32.to_le_bytes()); // xl_xid
+        r.extend_from_slice(&0u64.to_le_bytes()); // xl_prev
+        r.push(0); // xl_info
+        r.push(rmid); // xl_rmid
+        r.extend_from_slice(&[0, 0]); // padding
+        r.extend_from_slice(&0u32.to_le_bytes()); // xl_crc
+        r.extend_from_slice(body);
+        r
+    }
+
+    /// A record body with a single full-page image (with a hole) for block 0 of
+    /// `rel()`. The stored 8 bytes surround an all-zero hole in the page.
+    fn fpi_body() -> Vec<u8> {
+        let stored: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+        let hole_offset = 4u16;
+        let mut b = Vec::new();
+        b.push(0u8); // block_id
+        b.push(0x10 | (ForkNumber::Main as u8)); // BKPBLOCK_HAS_IMAGE | fork
+        b.extend_from_slice(&0u16.to_le_bytes()); // data_len
+        b.extend_from_slice(&(stored.len() as u16).to_le_bytes()); // bimg_len
+        b.extend_from_slice(&hole_offset.to_le_bytes()); // hole_offset
+        b.push(0x01 | 0x02); // BKPIMAGE_HAS_HOLE | BKPIMAGE_APPLY (uncompressed)
+        b.extend_from_slice(&rel().spc_node.to_le_bytes());
+        b.extend_from_slice(&rel().db_node.to_le_bytes());
+        b.extend_from_slice(&rel().rel_node.to_le_bytes());
+        b.extend_from_slice(&0u32.to_le_bytes()); // blkno
+        b.push(255u8); // XLR_BLOCK_ID_DATA_SHORT
+        b.push(0u8); // main_data_len = 0
+        b.extend_from_slice(&stored); // image bytes
+        b
+    }
+
+    /// A record body that references block 0 of `rel()` with no image (a real
+    /// change that would need Postgres redo to apply).
+    fn delta_body() -> Vec<u8> {
+        let mut b = Vec::new();
+        b.push(0u8); // block_id
+        b.push(ForkNumber::Main as u8); // fork, no flags
+        b.extend_from_slice(&0u16.to_le_bytes()); // data_len
+        b.extend_from_slice(&rel().spc_node.to_le_bytes());
+        b.extend_from_slice(&rel().db_node.to_le_bytes());
+        b.extend_from_slice(&rel().rel_node.to_le_bytes());
+        b.extend_from_slice(&0u32.to_le_bytes()); // blkno
+        b.push(255u8);
+        b.push(0u8);
+        b
+    }
+
+    /// Lay records into one long-header WAL page, MAXALIGN-padded between them.
+    fn wal_page(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut page = long_header();
+        for (i, rec) in records.iter().enumerate() {
+            page.extend_from_slice(rec);
+            if i + 1 < records.len() {
+                let pad = (8 - (page.len() % 8)) % 8;
+                page.extend(std::iter::repeat(0u8).take(pad));
+            }
+        }
+        page
+    }
+
+    #[test]
+    fn ingest_wal_materializes_a_full_page_image() {
+        let repo = Repository::new(1_000);
+        let wal = wal_page(&[xlog_record(10, &fpi_body())]);
+
+        let n = repo.ingest_wal(Lsn(0), &wal).expect("decode WAL");
+        assert_eq!(n, 1);
+
+        match repo.get_page(key(0), Lsn(1_000)).unwrap() {
+            PageLookup::Page(p) => {
+                assert_eq!(p.len(), PAGE_SIZE);
+                assert_eq!(&p[0..4], &[1, 2, 3, 4]); // before the hole
+                assert_eq!(&p[PAGE_SIZE - 4..], &[5, 6, 7, 8]); // after the hole
+                assert!(p[4..PAGE_SIZE - 4].iter().all(|&b| b == 0)); // the hole
+            }
+            other => panic!("{other:?}"),
+        }
+        // The page's relation size is now known from the WAL.
+        assert_eq!(repo.get_rel_size(rel(), Lsn(1_000)), Some(1));
+    }
+
+    #[test]
+    fn ingest_wal_keeps_raw_record_for_non_image_change() {
+        let repo = Repository::new(1_000);
+        // An FPI base followed by a real (non-image) change to the same page.
+        let wal = wal_page(&[xlog_record(10, &fpi_body()), xlog_record(10, &delta_body())]);
+
+        let n = repo.ingest_wal(Lsn(0), &wal).expect("decode WAL");
+        assert_eq!(n, 2);
+
+        // The native backend can't apply a raw WAL record: reconstruction must
+        // report that a Postgres wal-redo backend is required (Phase 3), rather
+        // than silently dropping the change or corrupting the page.
+        let err = repo.get_page(key(0), Lsn(1_000)).unwrap_err();
+        assert!(matches!(err, PageError::Redo(_)), "expected Redo error, got {err:?}");
     }
 }
