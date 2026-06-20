@@ -81,9 +81,13 @@ struct Args {
     #[arg(long, env = "SP_PS_METRICS_LISTEN", default_value = "0.0.0.0:9400")]
     metrics_listen: SocketAddr,
 
-    /// Address for the branch-management control endpoint.
+    /// Address for the line-oriented branch-management control endpoint.
     #[arg(long, env = "SP_PS_CONTROL_LISTEN", default_value = "0.0.0.0:6402")]
     control_listen: SocketAddr,
+
+    /// Address for the HTTP/JSON control-plane API.
+    #[arg(long, env = "SP_PS_HTTP_LISTEN", default_value = "0.0.0.0:6403")]
+    http_listen: SocketAddr,
 }
 
 #[tokio::main]
@@ -149,6 +153,13 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("failed to bind control {}", args.control_listen))?;
     tokio::spawn(serve_control(tenant.clone(), Some(store.clone()), control_listener));
     info!(addr = %args.control_listen, "branch control endpoint ready");
+
+    // HTTP/JSON control-plane API.
+    let http_listener = TcpListener::bind(args.http_listen)
+        .await
+        .with_context(|| format!("failed to bind http api {}", args.http_listen))?;
+    tokio::spawn(pageserver::serve_http_api(tenant.clone(), Some(store.clone()), http_listener));
+    info!(addr = %args.http_listen, "HTTP control-plane API ready");
 
     // Optional: pull committed WAL directly from a safekeeper (Phase 4) into the
     // root timeline. Per-branch receivers will follow with the control plane.
