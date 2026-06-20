@@ -31,10 +31,15 @@ pub const MAGIC: u32 = 0x5357_4C31;
 /// Protocol version.
 pub const VERSION: u8 = 1;
 
-/// Request type tag: append WAL (compute → safekeeper).
+/// Request type tag: append WAL (compute → safekeeper). The receiving safekeeper
+/// replicates the bytes to its peers before acknowledging.
 pub const TYPE_APPEND: u8 = 1;
 /// Request type tag: read committed WAL (page server → safekeeper).
 pub const TYPE_READ: u8 = 2;
+/// Request type tag: replicate WAL (leader safekeeper → peer safekeeper). Same
+/// body as an append, but the peer only stores + flushes + acks — it does not
+/// re-replicate, which is what stops forwarding from looping.
+pub const TYPE_REPLICATE: u8 = 3;
 
 /// Response status: success.
 pub const STATUS_OK: u8 = 0;
@@ -141,12 +146,21 @@ fn get_u64(b: &[u8], o: usize) -> u64 {
 }
 
 impl AppendRequest {
-    /// Encode the request (header + payload) to wire bytes.
+    /// Encode the request (header + payload) to wire bytes as a `TYPE_APPEND`.
     pub fn encode(&self) -> Vec<u8> {
+        self.encode_as(TYPE_APPEND)
+    }
+
+    /// Encode the request as a `TYPE_REPLICATE` (leader → peer forwarding).
+    pub fn encode_replicate(&self) -> Vec<u8> {
+        self.encode_as(TYPE_REPLICATE)
+    }
+
+    fn encode_as(&self, msg_type: u8) -> Vec<u8> {
         let mut b = Vec::with_capacity(REQUEST_HEADER_LEN + self.payload.len());
         put_u32(&mut b, MAGIC);
         b.push(VERSION);
-        b.push(TYPE_APPEND);
+        b.push(msg_type);
         b.push(0); // reserved
         b.push(0); // reserved
         b.extend_from_slice(self.tenant.as_bytes()); // 8..24
@@ -158,7 +172,7 @@ impl AppendRequest {
         b
     }
 
-    /// Read the payload length out of a 60-byte header.
+    /// Read the payload length out of a 60-byte append/replicate header.
     pub fn payload_len(header: &[u8]) -> Result<usize> {
         if header.len() < REQUEST_HEADER_LEN {
             return Err(Error::parse("append header too short"));
@@ -169,7 +183,7 @@ impl AppendRequest {
         if header[4] != VERSION {
             return Err(Error::parse("unsupported WAL protocol version"));
         }
-        if header[5] != TYPE_APPEND {
+        if header[5] != TYPE_APPEND && header[5] != TYPE_REPLICATE {
             return Err(Error::parse("unexpected WAL message type"));
         }
         Ok(get_u32(header, 56) as usize)

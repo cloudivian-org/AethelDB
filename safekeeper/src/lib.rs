@@ -16,6 +16,6 @@ pub mod server;
 pub mod storage;
 
 pub use consensus::{Consensus, NodeId, Role, Term};
-pub use replicator::{LocalSimReplicator, PeerAck, Replicator};
+pub use replicator::{LocalSimReplicator, NetworkReplicator, PeerAck, Replicator};
 pub use server::{serve, Safekeeper};
 pub use storage::{WalConfig, WalStorage};
