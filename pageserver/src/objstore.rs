@@ -22,6 +22,8 @@ pub trait ObjectStore: Send + Sync {
     async fn get(&self, key: &str) -> anyhow::Result<Vec<u8>>;
     /// List keys beginning with `prefix`.
     async fn list(&self, prefix: &str) -> anyhow::Result<Vec<String>>;
+    /// Delete `key` if present (idempotent: deleting a missing key succeeds).
+    async fn delete(&self, key: &str) -> anyhow::Result<()>;
 }
 
 /// A filesystem-backed object store — the mock MinIO/S3 for local dev.
@@ -84,6 +86,97 @@ impl ObjectStore for LocalObjectStore {
         })
         .await??;
         Ok(keys)
+    }
+
+    async fn delete(&self, key: &str) -> anyhow::Result<()> {
+        let path = self.path_for(key)?;
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            match std::fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e.into()),
+            }
+        })
+        .await??;
+        Ok(())
+    }
+}
+
+/// An S3-compatible object store (AWS S3 or MinIO) behind the [`ObjectStore`]
+/// trait, wrapping the `object_store` crate's S3 client.
+pub struct S3ObjectStore {
+    inner: object_store::aws::AmazonS3,
+}
+
+impl S3ObjectStore {
+    /// Connect to an S3-compatible endpoint. `endpoint` is the base URL (e.g.
+    /// `http://localhost:9000` for MinIO); plain HTTP is permitted for local dev.
+    pub fn new(
+        endpoint: &str,
+        bucket: &str,
+        region: &str,
+        access_key: &str,
+        secret_key: &str,
+    ) -> anyhow::Result<Self> {
+        use object_store::aws::AmazonS3Builder;
+        let inner = AmazonS3Builder::new()
+            .with_endpoint(endpoint)
+            .with_bucket_name(bucket)
+            .with_region(region)
+            .with_access_key_id(access_key)
+            .with_secret_access_key(secret_key)
+            .with_allow_http(endpoint.starts_with("http://"))
+            .build()
+            .map_err(|e| anyhow::anyhow!("building S3 client: {e}"))?;
+        Ok(S3ObjectStore { inner })
+    }
+}
+
+#[async_trait]
+impl ObjectStore for S3ObjectStore {
+    async fn put(&self, key: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
+        use object_store::ObjectStore as _;
+        self.inner
+            .put(&object_store::path::Path::from(key), bytes.into())
+            .await
+            .map_err(|e| anyhow::anyhow!("S3 put {key}: {e}"))?;
+        Ok(())
+    }
+
+    async fn get(&self, key: &str) -> anyhow::Result<Vec<u8>> {
+        use object_store::ObjectStore as _;
+        let result = self
+            .inner
+            .get(&object_store::path::Path::from(key))
+            .await
+            .map_err(|e| anyhow::anyhow!("S3 get {key}: {e}"))?;
+        let bytes = result.bytes().await.map_err(|e| anyhow::anyhow!("S3 read {key}: {e}"))?;
+        Ok(bytes.to_vec())
+    }
+
+    async fn list(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
+        use futures::TryStreamExt;
+        use object_store::ObjectStore as _;
+        let path = object_store::path::Path::from(prefix);
+        let metas: Vec<object_store::ObjectMeta> = self
+            .inner
+            .list(Some(&path))
+            .try_collect()
+            .await
+            .map_err(|e| anyhow::anyhow!("S3 list {prefix}: {e}"))?;
+        let mut keys: Vec<String> = metas.into_iter().map(|m| m.location.to_string()).collect();
+        keys.sort();
+        Ok(keys)
+    }
+
+    async fn delete(&self, key: &str) -> anyhow::Result<()> {
+        use object_store::ObjectStore as _;
+        match self.inner.delete(&object_store::path::Path::from(key)).await {
+            Ok(()) => Ok(()),
+            // Treat a missing object as success (idempotent).
+            Err(object_store::Error::NotFound { .. }) => Ok(()),
+            Err(e) => Err(anyhow::anyhow!("S3 delete {key}: {e}")),
+        }
     }
 }
 

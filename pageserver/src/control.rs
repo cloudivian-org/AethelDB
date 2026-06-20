@@ -21,10 +21,17 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, warn};
 
+use crate::objstore::ObjectStore;
+use crate::offload::layer_key;
 use crate::tenant::Tenant;
 
-/// Serve the control endpoint: branch-management commands.
-pub async fn serve_control(tenant: Arc<Tenant>, listener: TcpListener) -> anyhow::Result<()> {
+/// Serve the control endpoint: branch-management commands. When `store` is set,
+/// `gc` also deletes the compacted-away layer objects from it.
+pub async fn serve_control(
+    tenant: Arc<Tenant>,
+    store: Option<Arc<dyn ObjectStore>>,
+    listener: TcpListener,
+) -> anyhow::Result<()> {
     loop {
         let (socket, peer) = match listener.accept().await {
             Ok(pair) => pair,
@@ -34,25 +41,62 @@ pub async fn serve_control(tenant: Arc<Tenant>, listener: TcpListener) -> anyhow
             }
         };
         let tenant = tenant.clone();
+        let store = store.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle_conn(tenant, socket).await {
+            if let Err(err) = handle_conn(tenant, store, socket).await {
                 warn!(%peer, error = %format!("{err:#}"), "control connection error");
             }
         });
     }
 }
 
-async fn handle_conn(tenant: Arc<Tenant>, socket: TcpStream) -> anyhow::Result<()> {
+async fn handle_conn(
+    tenant: Arc<Tenant>,
+    store: Option<Arc<dyn ObjectStore>>,
+    socket: TcpStream,
+) -> anyhow::Result<()> {
     let (read_half, mut write_half) = socket.into_split();
     let mut lines = BufReader::new(read_half).lines();
     while let Some(line) = lines.next_line().await? {
-        let reply = exec(&tenant, &line);
+        // `gc` is handled here (it is async and may delete object-store files);
+        // the rest are pure and handled by `exec`.
+        let reply = if line.split_whitespace().next() == Some("gc") {
+            gc_command(&tenant, store.as_ref(), &line).await
+        } else {
+            exec(&tenant, &line)
+        };
         debug!(%line, %reply, "control command");
         write_half.write_all(reply.as_bytes()).await?;
         write_half.write_all(b"\n").await?;
         write_half.flush().await?;
     }
     Ok(())
+}
+
+/// Run a branch-aware GC and, if an object store is configured, delete the
+/// compacted-away layer files from it.
+async fn gc_command(tenant: &Arc<Tenant>, store: Option<&Arc<dyn ObjectStore>>, line: &str) -> String {
+    let horizon = match line.split_whitespace().nth(1).and_then(|s| s.parse::<u64>().ok()) {
+        Some(h) => h,
+        None => return "err usage: gc <horizon-lsn>".to_string(),
+    };
+    let stats = tenant.gc(Lsn(horizon));
+    let versions: usize = stats.iter().map(|(_, s)| s.versions_removed).sum();
+
+    let mut objects_deleted = 0;
+    if let Some(store) = store {
+        for (_, s) in &stats {
+            for id in &s.removed_layer_ids {
+                if store.delete(&layer_key(*id)).await.is_ok() {
+                    objects_deleted += 1;
+                }
+            }
+        }
+    }
+    format!(
+        "ok gc @ {horizon}: {} timelines, {versions} versions removed, {objects_deleted} objects deleted",
+        stats.len()
+    )
 }
 
 /// Execute one command line against the tenant, returning the reply line.

@@ -34,6 +34,9 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 clap = { workspace = true }
 async-trait = { workspace = true }
+# Real S3-compatible object store (MinIO / AWS S3) behind the ObjectStore trait.
+object_store = { version = "0.11", features = ["aws"] }
+futures = "0.3"
 
 [dev-dependencies]
 tokio = { workspace = true }

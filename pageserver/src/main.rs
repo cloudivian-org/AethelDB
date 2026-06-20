@@ -47,9 +47,27 @@ struct Args {
     #[arg(long, env = "SP_PS_WAL_START_LSN", default_value_t = 0)]
     wal_start_lsn: u64,
 
-    /// Local directory used as the (mock MinIO/S3) object store for layers.
+    /// Local directory used as the object store for layers when no S3 endpoint
+    /// is configured.
     #[arg(long, env = "SP_PS_OBJECT_DIR", default_value = ".data/pageserver/objstore")]
     object_dir: PathBuf,
+
+    /// S3-compatible endpoint (e.g. `http://localhost:9000` for MinIO). When set,
+    /// layers are offloaded to S3 instead of the local object directory.
+    #[arg(long, env = "SP_PS_S3_ENDPOINT", requires = "s3_bucket")]
+    s3_endpoint: Option<String>,
+    /// S3 bucket for offloaded layers (used with --s3-endpoint).
+    #[arg(long, env = "SP_PS_S3_BUCKET")]
+    s3_bucket: Option<String>,
+    /// S3 region (used with --s3-endpoint).
+    #[arg(long, env = "SP_PS_S3_REGION", default_value = "us-east-1")]
+    s3_region: String,
+    /// S3 access key id (used with --s3-endpoint).
+    #[arg(long, env = "SP_PS_S3_ACCESS_KEY", default_value = "minioadmin")]
+    s3_access_key: String,
+    /// S3 secret access key (used with --s3-endpoint).
+    #[arg(long, env = "SP_PS_S3_SECRET_KEY", default_value = "minioadmin")]
+    s3_secret_key: String,
 
     /// Freeze the memtable into a layer every N versions.
     #[arg(long, env = "SP_PS_FREEZE_THRESHOLD", default_value_t = 100_000)]
@@ -69,10 +87,25 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
     let args = Args::parse();
 
-    let store: Arc<dyn ObjectStore> = Arc::new(
-        LocalObjectStore::new(&args.object_dir)
-            .with_context(|| format!("opening object store at {}", args.object_dir.display()))?,
-    );
+    let store: Arc<dyn ObjectStore> = match (&args.s3_endpoint, &args.s3_bucket) {
+        (Some(endpoint), Some(bucket)) => {
+            info!(%endpoint, %bucket, "offloading layers to S3");
+            Arc::new(
+                pageserver::objstore::S3ObjectStore::new(
+                    endpoint,
+                    bucket,
+                    &args.s3_region,
+                    &args.s3_access_key,
+                    &args.s3_secret_key,
+                )
+                .context("connecting to S3 object store")?,
+            )
+        }
+        _ => Arc::new(
+            LocalObjectStore::new(&args.object_dir)
+                .with_context(|| format!("opening object store at {}", args.object_dir.display()))?,
+        ),
+    };
 
     // One tenant with a root timeline (`TimelineId::ZERO`); branches are created
     // at runtime via the control endpoint.
@@ -103,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
     let control_listener = TcpListener::bind(args.control_listen)
         .await
         .with_context(|| format!("failed to bind control {}", args.control_listen))?;
-    tokio::spawn(serve_control(tenant.clone(), control_listener));
+    tokio::spawn(serve_control(tenant.clone(), Some(store.clone()), control_listener));
     info!(addr = %args.control_listen, "branch control endpoint ready");
 
     // Optional: pull committed WAL directly from a safekeeper (Phase 4) into the
