@@ -100,9 +100,12 @@ make compute-image
 # Bring up the local stack (safekeeper, pageserver, MinIO, proxy)
 make up        # tear down with: make down
 
-# Run the Python end-to-end lifecycle suite (see e2e-tests/README.md)
-python3 -m pytest e2e-tests/
+# Run the Python end-to-end lifecycle suite
+make e2e
 ```
+
+For deployment — the wired-together Compose stack and Kubernetes manifests —
+see [`deploy/README.md`](deploy/README.md).
 
 Each service is an independently runnable binary configured by flag or env var:
 

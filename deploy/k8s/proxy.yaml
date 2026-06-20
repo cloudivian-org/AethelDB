@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# The activation proxy: the only externally-exposed service (PostgreSQL wire
+# protocol on :5432). In a real deployment it manages compute via a Kubernetes
+# activator; here it runs with no tenants by default. Provide tenants and TLS
+# via flags/Secrets.
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxy
+  labels: { app: proxy }
+spec:
+  type: LoadBalancer
+  selector: { app: proxy }
+  ports:
+    - { name: postgres, port: 5432, targetPort: 5432 }
+    - { name: metrics, port: 9432, targetPort: 9432 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: proxy }
+  template:
+    metadata:
+      labels: { app: proxy }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9432"
+    spec:
+      containers:
+        - name: proxy
+          image: aetheldb/proxy:dev # docker build --build-arg BIN=aethel-proxy
+          args:
+            - "aethel-proxy"
+            - "--listen"
+            - "0.0.0.0:5432"
+            - "--metrics-listen"
+            - "0.0.0.0:9432"
+          ports:
+            - { containerPort: 5432, name: postgres }
+            - { containerPort: 9432, name: metrics }

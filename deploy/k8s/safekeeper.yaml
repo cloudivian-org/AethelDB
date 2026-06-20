@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Safekeeper as a StatefulSet (stable identity + durable WAL volume) fronted by
+# a headless Service. Scale to 3 replicas and pass --members/--peer-addrs for a
+# real quorum group; this single-replica default is the dev configuration.
+apiVersion: v1
+kind: Service
+metadata:
+  name: safekeeper
+  labels: { app: safekeeper }
+spec:
+  clusterIP: None # headless: stable per-pod DNS (safekeeper-0.safekeeper, ...)
+  selector: { app: safekeeper }
+  ports:
+    - { name: wal, port: 6500, targetPort: 6500 }
+    - { name: metrics, port: 9500, targetPort: 9500 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: safekeeper
+spec:
+  serviceName: safekeeper
+  replicas: 1
+  selector:
+    matchLabels: { app: safekeeper }
+  template:
+    metadata:
+      labels: { app: safekeeper }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9500"
+    spec:
+      containers:
+        - name: safekeeper
+          image: aetheldb/safekeeper:dev # build: make compute-image / docker build --build-arg BIN=aethel-safekeeper
+          args:
+            - "aethel-safekeeper"
+            - "--listen"
+            - "0.0.0.0:6500"
+            - "--data-dir"
+            - "/data"
+            - "--metrics-listen"
+            - "0.0.0.0:9500"
+          ports:
+            - { containerPort: 6500, name: wal }
+            - { containerPort: 9500, name: metrics }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 10Gi }

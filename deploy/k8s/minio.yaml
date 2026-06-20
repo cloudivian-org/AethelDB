@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# MinIO (S3-compatible) object store for offloaded layers, plus a one-shot Job
+# that creates the bucket. Dev-grade: emptyDir storage and static credentials —
+# use a managed S3 and a Secret in production.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  labels: { app: minio }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: minio }
+  template:
+    metadata:
+      labels: { app: minio }
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          args: ["server", "/data", "--console-address", ":9090"]
+          env:
+            - { name: MINIO_ROOT_USER, value: minioadmin }
+            - { name: MINIO_ROOT_PASSWORD, value: minioadmin }
+          ports:
+            - { containerPort: 9000, name: s3 }
+            - { containerPort: 9090, name: console }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+spec:
+  selector: { app: minio }
+  ports:
+    - { name: s3, port: 9000, targetPort: 9000 }
+    - { name: console, port: 9090, targetPort: 9090 }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-create-bucket
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              until mc alias set m http://minio:9000 minioadmin minioadmin; do sleep 2; done &&
+              mc mb --ignore-existing m/aethel &&
+              echo "bucket aethel ready"
