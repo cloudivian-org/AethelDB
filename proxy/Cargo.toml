@@ -30,7 +30,13 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 clap = { workspace = true }
 async-trait = { workspace = true }
+# TLS termination for client connections (SSLRequest -> rustls handshake).
+# Pin the crypto backend to ring to keep the build dependency-light.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-pemfile = "2"
 
 [dev-dependencies]
 # The integration tests drive the proxy over real sockets.
 tokio = { workspace = true }
+# Generate a self-signed cert and connect as a TLS client in the TLS test.
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }

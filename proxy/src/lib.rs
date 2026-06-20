@@ -17,6 +17,7 @@ pub mod idle;
 pub mod protocol;
 pub mod proxy;
 pub mod tenant;
+pub mod tls;
 
 pub use activator::{Activator, CommandActivator, NoopActivator};
 pub use idle::ReaperConfig;

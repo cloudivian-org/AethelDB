@@ -53,6 +53,15 @@ struct Args {
     /// How often the idle reaper scans, in seconds.
     #[arg(long, env = "SP_PROXY_REAP_TICK_SECS", default_value_t = 10)]
     reap_tick_secs: u64,
+
+    /// PEM certificate-chain file for TLS termination. Set with --tls-key to
+    /// accept TLS (`SSLRequest`) from clients; omit for plaintext only.
+    #[arg(long, env = "SP_PROXY_TLS_CERT", requires = "tls_key")]
+    tls_cert: Option<std::path::PathBuf>,
+
+    /// PEM private-key file matching --tls-cert.
+    #[arg(long, env = "SP_PROXY_TLS_KEY", requires = "tls_cert")]
+    tls_key: Option<std::path::PathBuf>,
 }
 
 /// Parse a `name=host:port` tenant spec into a registry entry.
@@ -90,7 +99,15 @@ async fn main() -> anyhow::Result<()> {
         budget: Duration::from_millis(args.wake_budget_ms),
         ..HealthConfig::default()
     };
-    let proxy = Proxy::new(registry, activator, health);
+    // Enable TLS termination when a cert+key pair is configured.
+    let proxy = match (&args.tls_cert, &args.tls_key) {
+        (Some(cert), Some(key)) => {
+            let acceptor = proxy::tls::acceptor_from_pem(cert, key).context("loading TLS cert/key")?;
+            info!(cert = %cert.display(), "TLS termination enabled");
+            Proxy::with_tls(registry, activator, health, acceptor)
+        }
+        _ => Proxy::new(registry, activator, health),
+    };
 
     info!(
         listen = %args.listen,
