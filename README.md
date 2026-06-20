@@ -138,6 +138,20 @@ only as it's written — reading a page the branch hasn't touched transparently
 reconstructs it from the parent (copy-on-write). See
 [`docs/design/branching.md`](docs/design/branching.md).
 
+### HTTP control-plane API
+
+The same operations are available as a JSON API (default `:6403`) for a control
+plane or `aethelctl`-style tooling:
+
+```bash
+curl localhost:6403/healthz
+curl -XPOST localhost:6403/v1/timelines  -d '{"id":"<32-hex>"}'
+curl -XPOST localhost:6403/v1/branches   -d '{"timeline":"<hex>","parent":"<hex>","lsn":5000}'
+curl -XPOST localhost:6403/v1/timelines/receive -d '{"timeline":"<hex>","safekeeper":"127.0.0.1:6500","start_lsn":0}'
+curl -XPOST localhost:6403/v1/gc          -d '{"horizon_lsn":4000}'
+curl       localhost:6403/v1/timelines
+```
+
 ### Metrics
 
 ```bash

@@ -36,6 +36,9 @@ clap = { workspace = true }
 async-trait = { workspace = true }
 prometheus = { version = "0.13", default-features = false }
 once_cell = "1"
+# JSON bodies for the HTTP control-plane API.
+serde = { workspace = true }
+serde_json = "1"
 # Real S3-compatible object store (MinIO / AWS S3) behind the ObjectStore trait.
 object_store = { version = "0.11", features = ["aws"] }
 futures = "0.3"

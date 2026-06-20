@@ -936,6 +936,8 @@ dependencies = [
  "once_cell",
  "prometheus",
  "safekeeper",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
