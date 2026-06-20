@@ -18,6 +18,12 @@ path = "src/lib.rs"
 name = "aethel-pageserver"
 path = "src/main.rs"
 
+# Reference wal-redo process (toy apply semantics) used by the redo tests and
+# as the executable spec of the wal-redo pipe protocol.
+[[bin]]
+name = "aethel-walredo-mock"
+path = "src/bin/aethel-walredo-mock.rs"
+
 [dependencies]
 common = { workspace = true }
 tokio = { workspace = true }

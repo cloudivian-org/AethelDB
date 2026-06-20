@@ -174,7 +174,8 @@ impl Repository {
             Ok(Some(page)) => Ok(PageLookup::Page(page)),
             Ok(None) => Ok(PageLookup::NotFound),
             Err(RedoError::Apply(e)) => Err(e),
-            Err(e @ RedoError::NeedsPostgres { .. }) => Err(PageError::Redo(e.to_string())),
+            // NeedsPostgres / Process / RedoFailed all surface as a redo error.
+            Err(e) => Err(PageError::Redo(e.to_string())),
         }
     }
 

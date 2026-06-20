@@ -19,8 +19,14 @@ Status:
   committed WAL and ingest it via `Repository::ingest_record`. Wired into the
   `aethel-pageserver` binary behind `--safekeeper`. An end-to-end test drives a
   real safekeeper + receiver + repository over sockets and reconstructs a page.
-- **Phase 3 next** — the Postgres wal-redo process, after which non-FPI WAL
-  records (not just full-page images) materialize correctly.
+- **Phase 3 complete (page-server side)** — the wal-redo pipe protocol
+  (`pageserver/src/walredo_proto.rs`), the `PostgresRedoManager`
+  (`pageserver/src/walredo_process.rs`) that spawns and supervises a child redo
+  process (batches records, restarts transparently on failure), a reference
+  process (`aethel-walredo-mock`), and a C compute-side backend
+  (`compute/walredo/`). The page server's plumbing is fully tested against the
+  reference process; the one remaining step is the `postgres --wal-redo` core
+  mode the C backend links against (see `compute/walredo/README.md`).
 
 ## Why
 

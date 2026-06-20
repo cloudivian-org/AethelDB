@@ -32,12 +32,18 @@ pub enum RedoError {
     #[error("applying page version: {0}")]
     Apply(#[from] PageError),
     /// The history contains a raw WAL record that needs a Postgres redo backend,
-    /// which this build does not provide (arrives in Phase 3).
+    /// which this build does not provide (the native [`RustApplyRedoManager`]).
     #[error("WAL record at {lsn} requires a Postgres wal-redo backend")]
     NeedsPostgres {
         /// LSN of the record that could not be applied natively.
         lsn: Lsn,
     },
+    /// The wal-redo process could not be spawned or driven (I/O or protocol).
+    #[error("wal-redo process error: {0}")]
+    Process(String),
+    /// The wal-redo process reported that applying the records failed.
+    #[error("wal-redo failed: {0}")]
+    RedoFailed(String),
 }
 
 /// Reconstructs a page image from an LSN-ordered slice of its versions.

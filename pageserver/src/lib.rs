@@ -14,7 +14,9 @@
 //! * [`waldecode`] — PostgreSQL WAL stream framing + record decoding (Phase 1 of
 //!   the WAL decode/redo subsystem; see `docs/design/wal-redo.md`).
 //! * [`walredo`] — reconstructs a page from its version history (Phase 2): a
-//!   native Rust apply backend, with a Postgres wal-redo backend to follow.
+//!   native Rust apply backend.
+//! * [`walredo_proto`] / [`walredo_process`] — the wal-redo pipe protocol and a
+//!   Postgres-process redo backend (Phase 3).
 //! * [`walreceiver`] — streams committed WAL from a safekeeper into the store
 //!   (Phase 4), closing the safekeeper→page-server link.
 
@@ -27,6 +29,8 @@ pub mod server;
 pub mod waldecode;
 pub mod walreceiver;
 pub mod walredo;
+pub mod walredo_process;
+pub mod walredo_proto;
 
 pub use layer::{Layer, LayerId};
 pub use objstore::{LocalObjectStore, ObjectStore};
@@ -39,3 +43,4 @@ pub use waldecode::{
 };
 pub use walreceiver::{WalReceiver, WalReceiverConfig};
 pub use walredo::{RedoError, RustApplyRedoManager, WalRedoManager};
+pub use walredo_process::PostgresRedoManager;

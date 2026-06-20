@@ -24,6 +24,13 @@ when idle.
 > (it compiles against real PG 16) with a mock standing in for it where a live
 > server cannot boot; a `psycopg`/Docker suite covers the full-PG deployment.
 
+> **In progress — real PostgreSQL WAL.** A WAL decode/redo subsystem is being
+> built so the page server ingests genuine PostgreSQL WAL (not modelled deltas)
+> and materializes pages through Postgres's own redo routines. Landed so far:
+> the WAL stream decoder, the page-store redo seam, a live safekeeper→page-server
+> WAL receiver, and the wal-redo pipe protocol + process supervisor. See
+> [`docs/design/wal-redo.md`](./docs/design/wal-redo.md).
+
 ## Architecture
 
 ```
