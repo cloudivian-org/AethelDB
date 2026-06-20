@@ -1,0 +1,602 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Adds a 'postgres --wal-redo' single-backend mode that applies WAL records
+# to a single page out-of-process for the AethelDB page server. Reuses the
+# smgr hook from 0001-smgr-pluggable.patch. See compute/walredo/README.md.
+#
+diff --git a/src/backend/access/transam/Makefile b/src/backend/access/transam/Makefile
+index 661c55a..866a68f 100644
+--- a/src/backend/access/transam/Makefile
++++ b/src/backend/access/transam/Makefile
+@@ -26,6 +26,7 @@ OBJS = \
+ 	twophase.o \
+ 	twophase_rmgr.o \
+ 	varsup.o \
++	walredo.o \
+ 	xact.o \
+ 	xlog.o \
+ 	xlogarchive.o \
+diff --git a/src/backend/access/transam/meson.build b/src/backend/access/transam/meson.build
+index 8920c1b..d29e3d0 100644
+--- a/src/backend/access/transam/meson.build
++++ b/src/backend/access/transam/meson.build
+@@ -14,6 +14,7 @@ backend_sources += files(
+   'twophase.c',
+   'twophase_rmgr.c',
+   'varsup.c',
++  'walredo.c',
+   'xact.c',
+   'xlog.c',
+   'xlogarchive.c',
+diff --git a/src/backend/access/transam/walredo.c b/src/backend/access/transam/walredo.c
+new file mode 100644
+index 0000000..0d69b49
+--- /dev/null
++++ b/src/backend/access/transam/walredo.c
+@@ -0,0 +1,477 @@
++/*-------------------------------------------------------------------------
++ *
++ * walredo.c
++ *	  AethelDB wal-redo backend: apply WAL records to a single page in an
++ *	  isolated `postgres --wal-redo` process, on behalf of the page server.
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ * Copyright 2026 The AethelDB Authors
++ *
++ * The page server cannot apply an ordinary (non-full-page-image) WAL record to
++ * a page itself -- that requires PostgreSQL's per-resource-manager redo
++ * routines.  So it ships the work here: this backend reuses the standard
++ * single-user initialization (shared memory, buffer manager, smgr) and then,
++ * instead of the SQL loop, runs a request/response loop over stdin/stdout:
++ *
++ *   "here is page (rel, blk), its base image, and the WAL records that follow;
++ *    apply them with rm_redo and hand the page back."
++ *
++ * The target relation's storage is routed to memory via the pluggable smgr
++ * hook (see the 0001-smgr-pluggable patch), so redo's buffer reads/writes hit
++ * the base image we were handed rather than any on-disk file.
++ *
++ * The wire protocol is defined in pageserver/src/walredo_proto.rs and is shared
++ * with the Rust reference process (aethel-walredo-mock); see
++ * compute/walredo/README.md and docs/design/wal-redo.md.
++ *
++ * src/backend/access/transam/walredo.c
++ *
++ *-------------------------------------------------------------------------
++ */
++#include "postgres.h"
++
++#include <unistd.h>
++
++#include "access/rmgr.h"
++#include "access/walredo.h"
++#include "access/xlog.h"
++#include "access/xlog_internal.h"
++#include "access/xlogreader.h"
++#include "access/xlogrecord.h"
++#include "miscadmin.h"
++#include "storage/bufmgr.h"
++#include "storage/bufpage.h"
++#include "storage/ipc.h"
++#include "storage/relfilelocator.h"
++#include "storage/smgr.h"
++#include "utils/memutils.h"
++#include "utils/resowner.h"
++
++/* Whether this process is a wal-redo backend (set from main.c). */
++bool		am_wal_redo = false;
++
++/* ---- Protocol constants (must match pageserver/src/walredo_proto.rs). ---- */
++#define WR_REQ_MAGIC	0x57524431u /* "WRD1" */
++#define WR_RESP_MAGIC	0x57525231u /* "WRR1" */
++#define WR_VERSION		1
++#define WR_FLAG_HAS_BASE 0x01
++#define WR_STATUS_OK	0
++#define WR_STATUS_ERR	1
++
++/* ------------------------------------------------------------------------
++ * In-memory storage manager.
++ *
++ * Serves a single target block from process memory so that redo's buffer
++ * access resolves to the base image rather than a disk file.  Any other block
++ * a record happens to touch reads back as zeros and is harmless: we only care
++ * about the target block's result.
++ * ------------------------------------------------------------------------ */
++static bool inmem_active = false;
++static RelFileLocator inmem_loc;
++static ForkNumber inmem_fork = MAIN_FORKNUM;
++static BlockNumber inmem_blkno = 0;
++static char inmem_page[BLCKSZ];
++
++static bool
++inmem_is_target(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno)
++{
++	return inmem_active &&
++		RelFileLocatorEquals(reln->smgr_rlocator.locator, inmem_loc) &&
++		forknum == inmem_fork && blkno == inmem_blkno;
++}
++
++static void inmem_init(void) { }
++static void inmem_open(SMgrRelation reln) { }
++static void inmem_close(SMgrRelation reln, ForkNumber forknum) { }
++static void inmem_create(SMgrRelation reln, ForkNumber forknum, bool isRedo) { }
++static bool inmem_exists(SMgrRelation reln, ForkNumber forknum) { return true; }
++static void inmem_unlink(RelFileLocatorBackend rlocator, ForkNumber forknum, bool isRedo) { }
++
++static void
++inmem_extend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
++			 const void *buffer, bool skipFsync)
++{
++	if (inmem_is_target(reln, forknum, blocknum))
++		memcpy(inmem_page, buffer, BLCKSZ);
++}
++
++static void
++inmem_zeroextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
++				 int nblocks, bool skipFsync)
++{
++	if (inmem_active && forknum == inmem_fork && blocknum == inmem_blkno)
++		MemSet(inmem_page, 0, BLCKSZ);
++}
++
++static bool
++inmem_prefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum)
++{
++	return true;
++}
++
++static void
++inmem_read(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum, void *buffer)
++{
++	if (inmem_is_target(reln, forknum, blocknum))
++		memcpy(buffer, inmem_page, BLCKSZ);
++	else
++		MemSet(buffer, 0, BLCKSZ);
++}
++
++static void
++inmem_write(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
++			const void *buffer, bool skipFsync)
++{
++	if (inmem_is_target(reln, forknum, blocknum))
++		memcpy(inmem_page, buffer, BLCKSZ);
++}
++
++static void
++inmem_writeback(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
++				BlockNumber nblocks) { }
++
++static BlockNumber
++inmem_nblocks(SMgrRelation reln, ForkNumber forknum)
++{
++	if (inmem_active &&
++		RelFileLocatorEquals(reln->smgr_rlocator.locator, inmem_loc) &&
++		forknum == inmem_fork)
++		return inmem_blkno + 1;
++	return 0;
++}
++
++static void
++inmem_truncate(SMgrRelation reln, ForkNumber forknum, BlockNumber old_blocks,
++			   BlockNumber nblocks) { }
++static void inmem_immedsync(SMgrRelation reln, ForkNumber forknum) { }
++
++static const f_smgr inmem_smgr = {
++	.smgr_init = inmem_init,
++	.smgr_shutdown = NULL,
++	.smgr_open = inmem_open,
++	.smgr_close = inmem_close,
++	.smgr_create = inmem_create,
++	.smgr_exists = inmem_exists,
++	.smgr_unlink = inmem_unlink,
++	.smgr_extend = inmem_extend,
++	.smgr_zeroextend = inmem_zeroextend,
++	.smgr_prefetch = inmem_prefetch,
++	.smgr_read = inmem_read,
++	.smgr_write = inmem_write,
++	.smgr_writeback = inmem_writeback,
++	.smgr_nblocks = inmem_nblocks,
++	.smgr_truncate = inmem_truncate,
++	.smgr_immedsync = inmem_immedsync,
++};
++
++static const f_smgr *
++walredo_smgr_hook(BackendId backend, RelFileLocator rlocator)
++{
++	if (inmem_active && RelFileLocatorEquals(rlocator, inmem_loc))
++		return &inmem_smgr;
++	return smgr_standard(backend, rlocator);
++}
++
++/* ------------------------------------------------------------------------
++ * Big-endian wire helpers.
++ * ------------------------------------------------------------------------ */
++static uint32
++get_be32(const uint8 *p)
++{
++	return ((uint32) p[0] << 24) | ((uint32) p[1] << 16) |
++		((uint32) p[2] << 8) | (uint32) p[3];
++}
++
++static uint64
++get_be64(const uint8 *p)
++{
++	return ((uint64) get_be32(p) << 32) | (uint64) get_be32(p + 4);
++}
++
++static void
++put_be32(uint8 *p, uint32 v)
++{
++	p[0] = (uint8) (v >> 24);
++	p[1] = (uint8) (v >> 16);
++	p[2] = (uint8) (v >> 8);
++	p[3] = (uint8) v;
++}
++
++/* Read exactly n bytes from stdin; return false on clean EOF. */
++static bool
++read_full(uint8 *buf, size_t n)
++{
++	size_t		got = 0;
++
++	while (got < n)
++	{
++		ssize_t		r = read(STDIN_FILENO, buf + got, n - got);
++
++		if (r == 0)
++			return false;
++		if (r < 0)
++		{
++			if (errno == EINTR)
++				continue;
++			elog(FATAL, "wal-redo: stdin read error: %m");
++		}
++		got += (size_t) r;
++	}
++	return true;
++}
++
++/* Write exactly n bytes to stdout. */
++static void
++write_full(const uint8 *buf, size_t n)
++{
++	size_t		put = 0;
++
++	while (put < n)
++	{
++		ssize_t		w = write(STDOUT_FILENO, buf + put, n - put);
++
++		if (w < 0)
++		{
++			if (errno == EINTR)
++				continue;
++			elog(FATAL, "wal-redo: stdout write error: %m");
++		}
++		put += (size_t) w;
++	}
++}
++
++/* ------------------------------------------------------------------------
++ * One decoded request.
++ * ------------------------------------------------------------------------ */
++typedef struct WalRedoRequest
++{
++	RelFileLocator rlocator;
++	ForkNumber	forknum;
++	BlockNumber blkno;
++	bool		has_base;
++	uint8		base[BLCKSZ];
++	uint32		n_records;
++	XLogRecPtr *lsns;
++	char	  **records;
++	uint32	   *record_lens;
++} WalRedoRequest;
++
++/* Read one request from stdin into the current memory context; false on EOF. */
++static bool
++read_request(WalRedoRequest *req)
++{
++	uint8		hdr[28];
++	uint8		flags;
++	uint8		nbuf[4];
++
++	if (!read_full(hdr, sizeof(hdr)))
++		return false;
++
++	if (get_be32(hdr) != WR_REQ_MAGIC)
++		elog(FATAL, "wal-redo: bad request magic");
++	if (hdr[4] != WR_VERSION)
++		elog(FATAL, "wal-redo: bad request version %d", hdr[4]);
++
++	flags = hdr[5];
++	req->rlocator.spcOid = get_be32(hdr + 8);
++	req->rlocator.dbOid = get_be32(hdr + 12);
++	req->rlocator.relNumber = get_be32(hdr + 16);
++	req->forknum = (ForkNumber) hdr[20];
++	req->blkno = get_be32(hdr + 24);
++
++	req->has_base = (flags & WR_FLAG_HAS_BASE) != 0;
++	if (req->has_base)
++		(void) read_full(req->base, BLCKSZ);
++	else
++		MemSet(req->base, 0, BLCKSZ);
++
++	(void) read_full(nbuf, 4);
++	req->n_records = get_be32(nbuf);
++	req->lsns = palloc(sizeof(XLogRecPtr) * Max(req->n_records, 1));
++	req->records = palloc(sizeof(char *) * Max(req->n_records, 1));
++	req->record_lens = palloc(sizeof(uint32) * Max(req->n_records, 1));
++
++	for (uint32 i = 0; i < req->n_records; i++)
++	{
++		uint8		rh[12];
++		uint32		len;
++
++		(void) read_full(rh, sizeof(rh));
++		req->lsns[i] = (XLogRecPtr) get_be64(rh);
++		len = get_be32(rh + 8);
++		req->record_lens[i] = len;
++		req->records[i] = palloc(len);
++		(void) read_full((uint8 *) req->records[i], len);
++	}
++	return true;
++}
++
++static void
++write_page_response(const uint8 *page)
++{
++	uint8		hdr[8] = {0};
++
++	put_be32(hdr, WR_RESP_MAGIC);
++	hdr[4] = WR_VERSION;
++	hdr[5] = WR_STATUS_OK;
++	write_full(hdr, sizeof(hdr));
++	write_full(page, BLCKSZ);
++}
++
++static void
++write_error_response(const char *msg)
++{
++	uint8		hdr[8] = {0};
++	uint8		lenbuf[4];
++	size_t		len = strlen(msg);
++
++	put_be32(hdr, WR_RESP_MAGIC);
++	hdr[4] = WR_VERSION;
++	hdr[5] = WR_STATUS_ERR;
++	write_full(hdr, sizeof(hdr));
++	put_be32(lenbuf, (uint32) len);
++	write_full(lenbuf, 4);
++	write_full((const uint8 *) msg, len);
++}
++
++/* ------------------------------------------------------------------------
++ * Redo.
++ * ------------------------------------------------------------------------ */
++
++/* Apply one raw WAL record to the page held in the buffer pool. */
++static void
++apply_one_record(XLogReaderState *reader, XLogRecPtr lsn, char *recbytes, uint32 len)
++{
++	XLogRecord *record = (XLogRecord *) recbytes;
++	DecodedXLogRecord *decoded;
++	char	   *errormsg = NULL;
++	size_t		space;
++
++	if (len < SizeOfXLogRecord || record->xl_tot_len != len)
++		elog(ERROR, "wal-redo: malformed record (len=%u, xl_tot_len=%u)",
++			 len, record->xl_tot_len);
++
++	space = DecodeXLogRecordRequiredSpace(record->xl_tot_len);
++	decoded = (DecodedXLogRecord *) palloc(space);
++
++	if (!DecodeXLogRecord(reader, decoded, record, lsn, &errormsg))
++		elog(ERROR, "wal-redo: decode failed: %s", errormsg ? errormsg : "(unknown)");
++
++	/* Mirror what recovery does before calling rm_redo. */
++	decoded->next_lsn = lsn + record->xl_tot_len;
++	reader->record = decoded;
++	reader->ReadRecPtr = decoded->lsn;
++	reader->EndRecPtr = decoded->next_lsn;
++
++	RmgrTable[record->xl_rmid].rm_redo(reader);
++
++	reader->record = NULL;
++}
++
++/* Handle one request: seed the base page, apply records, return the result. */
++static void
++process_request(XLogReaderState *reader, WalRedoRequest *req)
++{
++	Buffer		buf;
++	uint8		result[BLCKSZ];
++
++	/* Route this relation's storage to memory and remember the target. */
++	inmem_active = true;
++	inmem_loc = req->rlocator;
++	inmem_fork = req->forknum;
++	inmem_blkno = req->blkno;
++	memcpy(inmem_page, req->base, BLCKSZ);
++
++	/*
++	 * Seed the buffer pool with the base image, overwriting any buffer left
++	 * from a previous request so reconstruction always starts from the base we
++	 * were handed.
++	 */
++	buf = ReadBufferWithoutRelcache(req->rlocator, req->forknum, req->blkno,
++									RBM_ZERO_AND_LOCK, NULL, true);
++	memcpy(BufferGetPage(buf), req->base, BLCKSZ);
++	MarkBufferDirty(buf);
++	UnlockReleaseBuffer(buf);
++
++	/* Apply each record; rm_redo updates the pooled buffer in place. */
++	for (uint32 i = 0; i < req->n_records; i++)
++		apply_one_record(reader, req->lsns[i], req->records[i], req->record_lens[i]);
++
++	/* Read the reconstructed page back out of the pool and reply. */
++	buf = ReadBufferWithoutRelcache(req->rlocator, req->forknum, req->blkno,
++									RBM_NORMAL, NULL, true);
++	LockBuffer(buf, BUFFER_LOCK_SHARE);
++	memcpy(result, BufferGetPage(buf), BLCKSZ);
++	UnlockReleaseBuffer(buf);
++
++	inmem_active = false;
++	write_page_response(result);
++}
++
++/* ------------------------------------------------------------------------
++ * Entry point: the redo protocol loop.
++ * ------------------------------------------------------------------------ */
++void
++WalRedoMain(void)
++{
++	XLogReaderState *reader;
++	MemoryContext redo_ctx;
++
++	/* Route target-relation storage through the in-memory manager. */
++	smgr_hook = walredo_smgr_hook;
++
++	/* ReadBuffer needs a resource owner to track pins. */
++	CurrentResourceOwner = ResourceOwnerCreate(NULL, "wal-redo");
++
++	reader = XLogReaderAllocate(wal_segment_size, NULL,
++							   XL_ROUTINE(.page_read = NULL,
++										  .segment_open = NULL,
++										  .segment_close = NULL),
++							   NULL);
++	if (reader == NULL)
++		elog(FATAL, "wal-redo: could not allocate XLog reader");
++
++	redo_ctx = AllocSetContextCreate(TopMemoryContext, "wal-redo request",
++									 ALLOCSET_DEFAULT_SIZES);
++
++	for (;;)
++	{
++		WalRedoRequest req;
++		MemoryContext old = MemoryContextSwitchTo(redo_ctx);
++		bool		got;
++
++		got = read_request(&req);
++		if (!got)
++		{
++			MemoryContextSwitchTo(old);
++			break;
++		}
++
++		PG_TRY();
++		{
++			process_request(reader, &req);
++		}
++		PG_CATCH();
++		{
++			ErrorData  *edata;
++
++			MemoryContextSwitchTo(redo_ctx);
++			edata = CopyErrorData();
++			write_error_response(edata->message);
++			FlushErrorState();
++			/*
++			 * The buffer-pool state may be inconsistent after a failed redo;
++			 * exit cleanly and let the page server respawn us for the next
++			 * request rather than risk applying onto a corrupt buffer.
++			 */
++			MemoryContextSwitchTo(old);
++			proc_exit(0);
++		}
++		PG_END_TRY();
++
++		MemoryContextSwitchTo(old);
++		MemoryContextReset(redo_ctx);
++	}
++
++	proc_exit(0);
++}
+diff --git a/src/backend/main/main.c b/src/backend/main/main.c
+index 2ddee8d..34cfdc6 100644
+--- a/src/backend/main/main.c
++++ b/src/backend/main/main.c
+@@ -30,6 +30,7 @@
+ #include <sys/param.h>
+ #endif
+ 
++#include "access/walredo.h"
+ #include "bootstrap/bootstrap.h"
+ #include "common/username.h"
+ #include "miscadmin.h"
+@@ -193,6 +194,17 @@ main(int argc, char *argv[])
+ #endif
+ 	else if (argc > 1 && strcmp(argv[1], "--describe-config") == 0)
+ 		GucInfoMain();
++	else if (argc > 1 && strcmp(argv[1], "--wal-redo") == 0)
++	{
++		/*
++		 * AethelDB wal-redo backend: reuse single-user initialization, but
++		 * PostgresMain() will enter the redo loop instead of the SQL loop.
++		 */
++		am_wal_redo = true;
++		argv[1] = "--single";
++		PostgresSingleUserMain(argc, argv,
++							   strdup(get_user_name_or_exit(progname)));
++	}
+ 	else if (argc > 1 && strcmp(argv[1], "--single") == 0)
+ 		PostgresSingleUserMain(argc, argv,
+ 							   strdup(get_user_name_or_exit(progname)));
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 7ba3e28..372690d 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -68,6 +68,7 @@
+ #include "storage/sinval.h"
+ #include "tcop/fastpath.h"
+ #include "tcop/pquery.h"
++#include "access/walredo.h"
+ #include "tcop/tcopprot.h"
+ #include "tcop/utility.h"
+ #include "utils/guc_hooks.h"
+@@ -4317,6 +4318,14 @@ PostgresMain(const char *dbname, const char *username)
+ 
+ 	SetProcessingMode(NormalProcessing);
+ 
++	/*
++	 * AethelDB wal-redo backend: now that initialization is complete (shared
++	 * memory, buffer manager, smgr), run the redo protocol loop instead of the
++	 * normal SQL command loop. WalRedoMain() does not return.
++	 */
++	if (am_wal_redo)
++		WalRedoMain();
++
+ 	/*
+ 	 * Now all GUC states are fully set up.  Report them to client if
+ 	 * appropriate.
+diff --git a/src/include/access/walredo.h b/src/include/access/walredo.h
+new file mode 100644
+index 0000000..bc112a0
+--- /dev/null
++++ b/src/include/access/walredo.h
+@@ -0,0 +1,25 @@
++/*-------------------------------------------------------------------------
++ *
++ * walredo.h
++ *	  AethelDB wal-redo backend: apply WAL records to a page out-of-process.
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ * Copyright 2026 The AethelDB Authors
++ *
++ * src/include/access/walredo.h
++ *
++ *-------------------------------------------------------------------------
++ */
++#ifndef WALREDO_H
++#define WALREDO_H
++
++/* True when this backend was started as `postgres --wal-redo`. */
++extern PGDLLIMPORT bool am_wal_redo;
++
++/*
++ * Run the wal-redo protocol loop. Called from PostgresMain() after standard
++ * single-user initialization, in place of the SQL command loop. Never returns.
++ */
++extern void WalRedoMain(void) pg_attribute_noreturn();
++
++#endif							/* WALREDO_H */

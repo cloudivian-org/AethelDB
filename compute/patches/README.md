@@ -14,6 +14,19 @@ AethelDB compute node. They are applied in lexical filename order by both
   disk. Verified to apply cleanly to `REL_16_STABLE` (`git apply --check`) and
   to compile under PostgreSQL's strict warning flags.
 
+- **`0002-wal-redo-mode.patch`** *(WAL decode/redo, Phase 3)* — adds a
+  `postgres --wal-redo` single-backend mode: an out-of-process WAL-redo server
+  for the page server. It reuses single-user initialization, then runs a
+  request/response loop (the protocol in `pageserver/src/walredo_proto.rs`)
+  instead of the SQL loop, applying WAL records to one page via the resource
+  managers' `rm_redo` routines. The target relation's storage is routed to
+  memory through the `smgr_hook` from 0001, so redo reads/writes hit the
+  page server's base image. New file `src/backend/access/transam/walredo.c`
+  (+ `access/walredo.h`); small hooks in `main.c` and `postgres.c`. Depends on
+  0001. Applies cleanly to `REL_16_STABLE`, compiles from scratch, and is
+  verified to reconstruct a page byte-identically from a real heap-insert WAL
+  record. See `compute/walredo/README.md`.
+
 The network storage manager itself ships as a normal extension under
 `compute/extension/aethel_smgr/` (built by `make extension` / the Dockerfile) rather
 than as a core patch, so it can be developed and tested independently.
