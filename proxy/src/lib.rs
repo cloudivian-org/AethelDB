@@ -14,6 +14,8 @@
 
 pub mod activator;
 pub mod idle;
+#[cfg(feature = "kubernetes")]
+pub mod k8s;
 pub mod metrics;
 pub mod protocol;
 pub mod proxy;

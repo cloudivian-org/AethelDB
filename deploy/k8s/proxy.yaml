@@ -32,8 +32,13 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9432"
     spec:
+      # Lets the Kubernetes activator scale per-tenant compute Deployments
+      # (see proxy-rbac.yaml). Harmless without the activator.
+      serviceAccountName: aethel-proxy
       containers:
         - name: proxy
+          # Build with `--features kubernetes` to enable the activator, then add
+          # `--kube-namespace aetheldb` to the args below.
           image: aetheldb/proxy:dev # docker build --build-arg BIN=aethel-proxy
           args:
             - "aethel-proxy"

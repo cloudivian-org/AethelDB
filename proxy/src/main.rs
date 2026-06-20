@@ -42,6 +42,18 @@ struct Args {
     #[arg(long, env = "SP_PROXY_STOP_COMMAND")]
     stop_command: Option<String>,
 
+    /// Kubernetes namespace for the compute Deployments. When set (with the
+    /// `kubernetes` build feature), the proxy scales a per-tenant Deployment
+    /// instead of running shell commands.
+    #[cfg(feature = "kubernetes")]
+    #[arg(long, env = "SP_PROXY_KUBE_NAMESPACE")]
+    kube_namespace: Option<String>,
+
+    /// Deployment name template for a tenant's compute (`{tenant}` is substituted).
+    #[cfg(feature = "kubernetes")]
+    #[arg(long, env = "SP_PROXY_KUBE_NAME_TEMPLATE", default_value = "compute-{tenant}")]
+    kube_name_template: String,
+
     /// Wake budget: hold the client this long waiting for compute to be ready.
     #[arg(long, env = "SP_PROXY_WAKE_BUDGET_MS", default_value_t = 500)]
     wake_budget_ms: u64,
@@ -92,12 +104,24 @@ async fn main() -> anyhow::Result<()> {
     }
     let registry = Arc::new(Registry::from_iter(entries));
 
-    // Choose an activator: command-based if start/stop commands were provided.
-    let activator: Arc<dyn Activator> = match (&args.start_command, &args.stop_command) {
-        (Some(start), Some(stop)) => Arc::new(CommandActivator::new(start.clone(), stop.clone())),
-        (None, None) => Arc::new(NoopActivator),
-        _ => anyhow::bail!("--start-command and --stop-command must be set together"),
-    };
+    // Choose an activator: Kubernetes (if a namespace is configured and the
+    // feature is built), else command-based, else no-op.
+    let activator: Arc<dyn Activator>;
+    #[cfg(feature = "kubernetes")]
+    if let Some(ns) = &args.kube_namespace {
+        activator = Arc::new(
+            proxy::k8s::KubeActivator::try_default(ns.clone(), args.kube_name_template.clone())
+                .await
+                .context("connecting to the Kubernetes API")?,
+        );
+        info!(namespace = %ns, "using the Kubernetes activator");
+    } else {
+        activator = command_or_noop(&args.start_command, &args.stop_command)?;
+    }
+    #[cfg(not(feature = "kubernetes"))]
+    {
+        activator = command_or_noop(&args.start_command, &args.stop_command)?;
+    }
 
     let health = HealthConfig {
         budget: Duration::from_millis(args.wake_budget_ms),
@@ -141,6 +165,18 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("failed to bind {}", args.listen))?;
     info!(addr = %args.listen, "accepting connections");
     serve(proxy, listener).await
+}
+
+/// Build the shell-command activator (if both commands are set) or the no-op.
+fn command_or_noop(
+    start: &Option<String>,
+    stop: &Option<String>,
+) -> anyhow::Result<Arc<dyn Activator>> {
+    Ok(match (start, stop) {
+        (Some(s), Some(t)) => Arc::new(CommandActivator::new(s.clone(), t.clone())),
+        (None, None) => Arc::new(NoopActivator),
+        _ => anyhow::bail!("--start-command and --stop-command must be set together"),
+    })
 }
 
 /// Configure structured logging. Honors `RUST_LOG`, defaulting to `info`.
