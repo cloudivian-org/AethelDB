@@ -18,7 +18,7 @@ use common::wal_service::{
 };
 use common::{Lsn, TenantId, TimelineId};
 use safekeeper::consensus::Consensus;
-use safekeeper::replicator::LocalSimReplicator;
+use safekeeper::replicator::{LocalSimReplicator, NetworkReplicator};
 use safekeeper::server::{serve, Safekeeper};
 use safekeeper::storage::{WalConfig, WalStorage};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -137,6 +137,88 @@ async fn lone_safekeeper_commits_on_its_own() {
     })
     .await;
     assert!(outcome.is_ok(), "solo test timed out");
+}
+
+#[tokio::test]
+async fn real_replication_commits_on_quorum_and_is_durable_on_peers() {
+    // Two acceptor safekeepers (nodes 2 and 3), each on its own store.
+    let dir2 = TempDir::new("peer2");
+    let dir3 = TempDir::new("peer3");
+    let peer2 = Safekeeper::new(
+        WalStorage::open(wal_cfg(&dir2)).unwrap(),
+        Consensus::new(2, vec![1, 2, 3]),
+        Arc::new(LocalSimReplicator::new(vec![])),
+    );
+    let peer3 = Safekeeper::new(
+        WalStorage::open(wal_cfg(&dir3)).unwrap(),
+        Consensus::new(3, vec![1, 2, 3]),
+        Arc::new(LocalSimReplicator::new(vec![])),
+    );
+    let addr2 = spawn_safekeeper(peer2).await;
+    let addr3 = spawn_safekeeper(peer3).await;
+
+    // The leader (node 1) replicates to the two peers over the network. Quorum
+    // is 2 of 3, so the leader plus one peer suffices.
+    let dir1 = TempDir::new("leader");
+    let leader = Safekeeper::new(
+        WalStorage::open(wal_cfg(&dir1)).unwrap(),
+        Consensus::new(1, vec![1, 2, 3]),
+        Arc::new(NetworkReplicator::new(vec![(2, addr2), (3, addr3)])),
+    );
+    let leader_addr = spawn_safekeeper(leader).await;
+
+    let payload = b"replicated-wal-run";
+    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut stream = TcpStream::connect(leader_addr).await.unwrap();
+        let r = send_append(&mut stream, &append(0, payload)).await;
+        assert_eq!(r.status, STATUS_OK);
+        assert_eq!(
+            r.commit_lsn,
+            Lsn(payload.len() as u64),
+            "the run commits once a quorum of safekeepers has it",
+        );
+    })
+    .await;
+    assert!(outcome.is_ok(), "replication test timed out");
+
+    // The bytes physically reached both peers and are durable on their disks.
+    for dir in [&dir2, &dir3] {
+        let store = WalStorage::open(wal_cfg(dir)).unwrap();
+        assert_eq!(store.flush_lsn(), Lsn(payload.len() as u64), "peer flushed the run");
+        let mut buf = vec![0u8; payload.len()];
+        store.read_at(Lsn(0), &mut buf).unwrap();
+        assert_eq!(&buf, payload, "peer durably stored the replicated WAL");
+    }
+}
+
+#[tokio::test]
+async fn commit_advances_with_one_peer_down() {
+    // Only one peer is up; with quorum 2 of 3, the leader plus that one peer
+    // still commits. The second peer's address points nowhere.
+    let dir2 = TempDir::new("up-peer");
+    let peer2 = Safekeeper::new(
+        WalStorage::open(wal_cfg(&dir2)).unwrap(),
+        Consensus::new(2, vec![1, 2, 3]),
+        Arc::new(LocalSimReplicator::new(vec![])),
+    );
+    let addr2 = spawn_safekeeper(peer2).await;
+    let dead: SocketAddr = "127.0.0.1:1".parse().unwrap(); // unroutable peer 3
+
+    let dir1 = TempDir::new("leader2");
+    let leader = Safekeeper::new(
+        WalStorage::open(wal_cfg(&dir1)).unwrap(),
+        Consensus::new(1, vec![1, 2, 3]),
+        Arc::new(NetworkReplicator::new(vec![(2, addr2), (3, dead)])),
+    );
+    let leader_addr = spawn_safekeeper(leader).await;
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut stream = TcpStream::connect(leader_addr).await.unwrap();
+        let r = send_append(&mut stream, &append(0, b"still-commits")).await;
+        assert_eq!(r.commit_lsn, Lsn("still-commits".len() as u64), "quorum reached without peer 3");
+    })
+    .await;
+    assert!(outcome.is_ok(), "one-peer-down test timed out");
 }
 
 #[tokio::test]

@@ -20,6 +20,7 @@ use anyhow::Context;
 use common::wal_service::{
     message_type, AppendRequest, AppendResponse, ReadRequest, ReadResponse, PREFIX_LEN,
     READ_REQUEST_LEN, REQUEST_HEADER_LEN, STATUS_OK, STATUS_STALE_TERM, TYPE_APPEND, TYPE_READ,
+    TYPE_REPLICATE,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -102,6 +103,38 @@ impl Safekeeper {
         Ok(AppendResponse { status: STATUS_OK, term, flush_lsn, commit_lsn })
     }
 
+    /// Process a replication append from a leader safekeeper: durably store and
+    /// flush the bytes and reply with our flush position. Acceptor role — it does
+    /// **not** re-replicate, which is what keeps forwarding from looping.
+    pub fn handle_replicate(&self, req: &AppendRequest) -> anyhow::Result<AppendResponse> {
+        let (node_id, term) = {
+            let c = self.consensus.lock().unwrap();
+            if req.term < c.term() {
+                return Ok(AppendResponse {
+                    status: STATUS_STALE_TERM,
+                    term: c.term(),
+                    flush_lsn: self.storage.lock().unwrap().flush_lsn(),
+                    commit_lsn: c.commit_lsn(),
+                });
+            }
+            (c.node_id(), c.term())
+        };
+
+        let flush_lsn = {
+            let mut s = self.storage.lock().unwrap();
+            s.append(req.start_lsn, &req.payload).context("replicate: append to WAL store")?;
+            s.flush().context("replicate: flush WAL store")?
+        };
+
+        let commit_lsn = {
+            let mut c = self.consensus.lock().unwrap();
+            c.record_flush(node_id, flush_lsn);
+            c.commit_lsn()
+        };
+        debug!(%flush_lsn, "replicated WAL run from leader");
+        Ok(AppendResponse { status: STATUS_OK, term, flush_lsn, commit_lsn })
+    }
+
     /// Serve a read request: return committed WAL from the requested cursor.
     ///
     /// Answers with `[from, commit_lsn)` capped at `max_bytes`, where `from` is
@@ -136,6 +169,7 @@ impl Safekeeper {
             }
             match message_type(&prefix).context("parsing message prefix")? {
                 TYPE_APPEND => self.serve_append(&mut stream, &prefix).await?,
+                TYPE_REPLICATE => self.serve_replicate(&mut stream, &prefix).await?,
                 TYPE_READ => self.serve_read(&mut stream, &prefix).await?,
                 other => anyhow::bail!("unknown WAL message type {other}"),
             }
@@ -166,6 +200,31 @@ impl Safekeeper {
         let req = AppendRequest::decode(&full).context("decoding append request")?;
         let resp = self.handle_append(&req).await?;
         stream.write_all(&resp.encode()).await.context("writing append response")?;
+        Ok(())
+    }
+
+    /// Read the rest of a replication append, store it, and reply.
+    async fn serve_replicate(
+        self: &Arc<Self>,
+        stream: &mut TcpStream,
+        prefix: &[u8; PREFIX_LEN],
+    ) -> anyhow::Result<()> {
+        let mut full = vec![0u8; REQUEST_HEADER_LEN];
+        full[..PREFIX_LEN].copy_from_slice(prefix);
+        stream
+            .read_exact(&mut full[PREFIX_LEN..])
+            .await
+            .context("reading replicate header")?;
+        let plen = AppendRequest::payload_len(&full).context("parsing replicate header")?;
+        full.resize(REQUEST_HEADER_LEN + plen, 0);
+        stream
+            .read_exact(&mut full[REQUEST_HEADER_LEN..])
+            .await
+            .context("reading replicate payload")?;
+
+        let req = AppendRequest::decode(&full).context("decoding replicate request")?;
+        let resp = self.handle_replicate(&req)?;
+        stream.write_all(&resp.encode()).await.context("writing replicate response")?;
         Ok(())
     }
 

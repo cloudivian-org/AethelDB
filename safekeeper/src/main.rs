@@ -13,9 +13,10 @@ use std::sync::Arc;
 use anyhow::Context;
 use clap::Parser;
 use tokio::net::TcpListener;
+use tracing::info;
 
 use safekeeper::consensus::{Consensus, NodeId};
-use safekeeper::replicator::{LocalSimReplicator, Replicator};
+use safekeeper::replicator::{LocalSimReplicator, NetworkReplicator, Replicator};
 use safekeeper::server::{self, serve, Safekeeper};
 use safekeeper::storage::{WalConfig, WalStorage};
 
@@ -39,6 +40,13 @@ struct Args {
     /// node). Defaults to a single-node group of just this node.
     #[arg(long, env = "SP_SK_MEMBERS", value_delimiter = ',')]
     members: Vec<NodeId>,
+
+    /// Peer addresses for real over-the-network replication, as
+    /// `id=host:port` pairs (comma-separated), e.g. `2=10.0.0.2:6500,3=10.0.0.3:6500`.
+    /// When set, this safekeeper replicates committed WAL to those peers; when
+    /// empty it runs single-process with simulated peers.
+    #[arg(long, env = "SP_SK_PEER_ADDRS", value_delimiter = ',')]
+    peer_addrs: Vec<String>,
 
     /// Segment file size in bytes.
     #[arg(long, env = "SP_SK_SEGMENT_SIZE", default_value_t = 16 * 1024 * 1024)]
@@ -72,9 +80,27 @@ async fn main() -> anyhow::Result<()> {
     let consensus = Consensus::new(args.node_id, members.clone());
     let quorum = consensus.quorum();
 
-    // Peers = all members except ourselves; simulated as instantly durable.
+    // Peers = all members except ourselves.
     let peers: Vec<NodeId> = members.into_iter().filter(|&m| m != args.node_id).collect();
-    let replicator: Arc<dyn Replicator> = Arc::new(LocalSimReplicator::new(peers));
+
+    // With peer addresses, replicate for real over the network; otherwise
+    // simulate instantly-durable peers (single-process dev).
+    let replicator: Arc<dyn Replicator> = if args.peer_addrs.is_empty() {
+        Arc::new(LocalSimReplicator::new(peers))
+    } else {
+        let mut peer_targets = Vec::new();
+        for spec in &args.peer_addrs {
+            let (id, addr) = spec
+                .split_once('=')
+                .with_context(|| format!("peer address must be id=host:port, got '{spec}'"))?;
+            let id: NodeId = id.parse().with_context(|| format!("bad peer id in '{spec}'"))?;
+            let addr: std::net::SocketAddr =
+                addr.parse().with_context(|| format!("bad peer address in '{spec}'"))?;
+            peer_targets.push((id, addr));
+        }
+        info!(peers = ?peer_targets, "replicating WAL to peers over the network");
+        Arc::new(NetworkReplicator::new(peer_targets))
+    };
 
     let sk = Safekeeper::new(storage, consensus, replicator);
 
