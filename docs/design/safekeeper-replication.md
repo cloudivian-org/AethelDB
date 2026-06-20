@@ -57,9 +57,22 @@ aethel-safekeeper --node-id 1 --members 1,2,3 \
 Without `--peer-addrs`, the safekeeper runs single-process with simulated
 instantly-durable peers (dev/test).
 
+## Leader election over the wire
+
+A candidate stands for election by bumping the term and requesting votes from
+its peers (`Safekeeper::run_election`, the `TYPE_VOTE` message). Each safekeeper
+grants at most one vote per term (`Consensus::handle_vote_request`) and reports
+its current term and flush position; the candidate wins once it has a quorum of
+grants (its self-vote plus enough peers). A candidate standing in a term older
+than one the peers have already voted in is denied — so two proposers can't both
+win, preventing split-brain WAL.
+
+Verified with three real safekeepers: a candidate wins a 2-of-3 quorum, and
+loses when the peers have already voted in a higher term.
+
 ## Next
 
-- **Leader election over the wire** — terms/votes already exist in
-  `consensus`; elect the proposer dynamically rather than fixing node 1.
 - **Catch-up / backfill** — a peer that was down should stream the WAL it missed
   on reconnect, not just resume at the current position.
+- **Election triggers** — wire `run_election` to a startup/timeout policy (the
+  mechanism is here; the *when* is a control-plane choice).

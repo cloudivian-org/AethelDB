@@ -40,6 +40,8 @@ pub const TYPE_READ: u8 = 2;
 /// body as an append, but the peer only stores + flushes + acks — it does not
 /// re-replicate, which is what stops forwarding from looping.
 pub const TYPE_REPLICATE: u8 = 3;
+/// Request type tag: request a leadership vote (candidate → safekeeper).
+pub const TYPE_VOTE: u8 = 4;
 
 /// Response status: success.
 pub const STATUS_OK: u8 = 0;
@@ -59,6 +61,10 @@ pub const RESPONSE_LEN: usize = 32;
 pub const READ_REQUEST_LEN: usize = 52;
 /// Fixed size of a [`ReadResponse`] header (the WAL payload follows it).
 pub const READ_RESPONSE_HEADER_LEN: usize = 28;
+/// Fixed size of a [`VoteRequest`].
+pub const VOTE_REQUEST_LEN: usize = 56;
+/// Fixed size of a [`VoteResponse`].
+pub const VOTE_RESPONSE_LEN: usize = 24;
 
 /// Validate the common prefix and return the message type byte.
 pub fn message_type(prefix: &[u8]) -> Result<u8> {
@@ -128,6 +134,31 @@ pub struct ReadResponse {
     /// Committed WAL bytes in `[start_lsn, start_lsn + payload.len())`; empty
     /// when the reader is already caught up to `commit_lsn`.
     pub payload: Vec<u8>,
+}
+
+/// A candidate's request for a leadership vote in `term`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoteRequest {
+    /// Tenant whose safekeeper group is voting.
+    pub tenant: TenantId,
+    /// Timeline (branch) this group serves.
+    pub timeline: TimelineId,
+    /// The term the candidate is standing for.
+    pub term: u64,
+    /// The candidate's node id.
+    pub candidate: u64,
+}
+
+/// A safekeeper's reply to a [`VoteRequest`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VoteResponse {
+    /// Whether the vote was granted.
+    pub granted: bool,
+    /// The voter's current term (≥ the request's; higher means the candidate is
+    /// behind and should step down).
+    pub term: u64,
+    /// The voter's durable flush position (so a new leader knows where to resume).
+    pub flush_lsn: Lsn,
 }
 
 fn put_u32(b: &mut Vec<u8>, v: u32) {
@@ -317,9 +348,89 @@ impl ReadResponse {
     }
 }
 
+impl VoteRequest {
+    /// Encode the fixed-size vote request.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(VOTE_REQUEST_LEN);
+        put_u32(&mut b, MAGIC);
+        b.push(VERSION);
+        b.push(TYPE_VOTE);
+        b.push(0);
+        b.push(0);
+        b.extend_from_slice(self.tenant.as_bytes()); // 8..24
+        b.extend_from_slice(self.timeline.as_bytes()); // 24..40
+        put_u64(&mut b, self.term); // 40..48
+        put_u64(&mut b, self.candidate); // 48..56
+        b
+    }
+
+    /// Decode a fixed-size vote request.
+    pub fn decode(buf: &[u8]) -> Result<VoteRequest> {
+        if buf.len() < VOTE_REQUEST_LEN {
+            return Err(Error::parse("vote request too short"));
+        }
+        if message_type(buf)? != TYPE_VOTE {
+            return Err(Error::parse("unexpected WAL message type"));
+        }
+        Ok(VoteRequest {
+            tenant: TenantId::from_bytes(buf[8..24].try_into().unwrap()),
+            timeline: TimelineId::from_bytes(buf[24..40].try_into().unwrap()),
+            term: get_u64(buf, 40),
+            candidate: get_u64(buf, 48),
+        })
+    }
+}
+
+impl VoteResponse {
+    /// Encode the fixed-size vote response.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(VOTE_RESPONSE_LEN);
+        put_u32(&mut b, MAGIC);
+        b.push(VERSION);
+        b.push(self.granted as u8);
+        b.push(0);
+        b.push(0);
+        put_u64(&mut b, self.term); // 8..16
+        put_u64(&mut b, self.flush_lsn.raw()); // 16..24
+        b
+    }
+
+    /// Decode a fixed-size vote response.
+    pub fn decode(buf: &[u8]) -> Result<VoteResponse> {
+        if buf.len() < VOTE_RESPONSE_LEN {
+            return Err(Error::parse("vote response too short"));
+        }
+        if get_u32(buf, 0) != MAGIC || buf[4] != VERSION {
+            return Err(Error::parse("bad vote response header"));
+        }
+        Ok(VoteResponse {
+            granted: buf[5] != 0,
+            term: get_u64(buf, 8),
+            flush_lsn: Lsn(get_u64(buf, 16)),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vote_round_trips() {
+        let req = VoteRequest {
+            tenant: TenantId::ZERO,
+            timeline: TimelineId::ZERO,
+            term: 7,
+            candidate: 3,
+        };
+        let bytes = req.encode();
+        assert_eq!(bytes.len(), VOTE_REQUEST_LEN);
+        assert_eq!(message_type(&bytes).unwrap(), TYPE_VOTE);
+        assert_eq!(VoteRequest::decode(&bytes).unwrap(), req);
+
+        let resp = VoteResponse { granted: true, term: 7, flush_lsn: Lsn(0x4000) };
+        assert_eq!(VoteResponse::decode(&resp.encode()).unwrap(), resp);
+    }
 
     #[test]
     fn append_request_round_trips() {

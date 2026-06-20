@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::wal_service::{
-    AppendRequest, AppendResponse, ReadRequest, ReadResponse, READ_RESPONSE_HEADER_LEN,
-    RESPONSE_LEN, STATUS_OK,
+    AppendRequest, AppendResponse, ReadRequest, ReadResponse, VoteRequest, VoteResponse,
+    READ_RESPONSE_HEADER_LEN, RESPONSE_LEN, STATUS_OK, VOTE_RESPONSE_LEN,
 };
 use common::{Lsn, TenantId, TimelineId};
 use safekeeper::consensus::Consensus;
@@ -137,6 +137,66 @@ async fn lone_safekeeper_commits_on_its_own() {
     })
     .await;
     assert!(outcome.is_ok(), "solo test timed out");
+}
+
+/// Acceptor safekeeper (knows the 3-node group) on its own store.
+fn acceptor(node: u64, dir: &TempDir) -> Arc<Safekeeper> {
+    Safekeeper::new(
+        WalStorage::open(wal_cfg(dir)).unwrap(),
+        Consensus::new(node, vec![1, 2, 3]),
+        Arc::new(LocalSimReplicator::new(vec![])),
+    )
+}
+
+/// Send a raw vote request to a safekeeper and read its response.
+async fn send_vote(addr: SocketAddr, term: u64, candidate: u64) -> VoteResponse {
+    let req = VoteRequest { tenant: TenantId::ZERO, timeline: TimelineId::ZERO, term, candidate };
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    stream.write_all(&req.encode()).await.unwrap();
+    let mut resp = vec![0u8; VOTE_RESPONSE_LEN];
+    stream.read_exact(&mut resp).await.unwrap();
+    VoteResponse::decode(&resp).unwrap()
+}
+
+#[tokio::test]
+async fn candidate_wins_election_with_quorum_votes() {
+    let dir2 = TempDir::new("vote-peer2");
+    let dir3 = TempDir::new("vote-peer3");
+    let addr2 = spawn_safekeeper(acceptor(2, &dir2)).await;
+    let addr3 = spawn_safekeeper(acceptor(3, &dir3)).await;
+
+    // Node 1 stands for election against peers 2 and 3 over the network.
+    let dir1 = TempDir::new("vote-leader");
+    let leader = acceptor(1, &dir1);
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+        let won = leader.run_election(&[(2, addr2), (3, addr3)]).await.unwrap();
+        assert!(won, "candidate should win with self-vote + a peer grant (quorum 2)");
+    })
+    .await;
+    assert!(outcome.is_ok(), "election test timed out");
+}
+
+#[tokio::test]
+async fn candidate_loses_when_peers_already_voted_in_a_higher_term() {
+    let dir2 = TempDir::new("hv-peer2");
+    let dir3 = TempDir::new("hv-peer3");
+    let addr2 = spawn_safekeeper(acceptor(2, &dir2)).await;
+    let addr3 = spawn_safekeeper(acceptor(3, &dir3)).await;
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+        // Another candidate (node 9) wins both peers' votes in term 5 first.
+        assert!(send_vote(addr2, 5, 9).await.granted);
+        assert!(send_vote(addr3, 5, 9).await.granted);
+
+        // Node 1 now stands in term 1 — both peers deny (they're at term 5).
+        let dir1 = TempDir::new("hv-leader");
+        let leader = acceptor(1, &dir1);
+        let won = leader.run_election(&[(2, addr2), (3, addr3)]).await.unwrap();
+        assert!(!won, "candidate must lose against a higher established term");
+    })
+    .await;
+    assert!(outcome.is_ok(), "higher-term election test timed out");
 }
 
 #[tokio::test]
