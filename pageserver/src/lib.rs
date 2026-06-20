@@ -26,6 +26,8 @@ pub mod offload;
 pub mod page;
 pub mod repository;
 pub mod server;
+pub mod tenant;
+pub mod timeline;
 pub mod waldecode;
 pub mod walreceiver;
 pub mod walredo;
@@ -37,6 +39,8 @@ pub use objstore::{LocalObjectStore, ObjectStore};
 pub use page::{ByteEdit, Modification, PageVersion, WalRecord};
 pub use repository::{PageLookup, Repository};
 pub use server::{serve_ingest, serve_pages};
+pub use tenant::{Tenant, TenantError};
+pub use timeline::Timeline;
 pub use waldecode::{
     decode_wal_record, Compression, DecodedBlock, DecodedImage, DecodedWalRecord, WalDecodeError,
     WalStreamDecoder,

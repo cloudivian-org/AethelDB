@@ -153,13 +153,36 @@ impl Repository {
         debug!(layer_id = id, versions = n, "froze memtable into layer");
     }
 
-    /// Reconstruct page `key` as it was at `lsn`.
+    /// Reconstruct page `key` as it was at `lsn`, using only this store's data.
     pub fn get_page(&self, key: PageKey, lsn: Lsn) -> Result<PageLookup, PageError> {
+        self.get_page_with_base(key, lsn, None)
+    }
+
+    /// Reconstruct page `key` at `lsn`, optionally starting from an externally
+    /// supplied base image at `base.0` (e.g. the same page on a parent timeline
+    /// at the branch point). This store's versions are applied on top.
+    ///
+    /// With no base and no local base version, the page is `NotFound`. With a
+    /// base, the store's deltas are replayed over it; a newer full image in this
+    /// store supersedes the base, as usual.
+    pub fn get_page_with_base(
+        &self,
+        key: PageKey,
+        lsn: Lsn,
+        base: Option<(Lsn, Vec<u8>)>,
+    ) -> Result<PageLookup, PageError> {
         let inner = self.inner.lock().unwrap();
 
+        // The supplied base, wrapped as an Image version. Held for the duration
+        // so `versions` can borrow it alongside the in-store versions.
+        let base_holder = base.map(|(blsn, page)| (blsn, PageVersion::Image(page)));
+
         // Gather all versions of this page with LSN <= target, across the
-        // memtable and every layer, then order them by LSN.
+        // (optional) base, the memtable, and every layer, ordered by LSN.
         let mut versions: Vec<(Lsn, &PageVersion)> = Vec::new();
+        if let Some((blsn, ref bver)) = base_holder {
+            versions.push((blsn, bver));
+        }
         for ((_, l), v) in inner.memtable.range((key, Lsn::INVALID)..=(key, lsn)) {
             versions.push((*l, v));
         }
