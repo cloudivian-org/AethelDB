@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Generic builder for any AethelDB Rust service. Pass the target binary via
+# the BIN build arg, e.g. `--build-arg BIN=aethel-proxy`. Used by docker-compose.yml.
+
+FROM rust:1-bookworm AS builder
+ARG BIN
+WORKDIR /build
+# Copy the whole workspace so path-dependencies (the `common` crate) resolve.
+COPY . .
+RUN test -n "$BIN" || (echo "BIN build-arg is required" >&2; exit 1)
+RUN cargo build --release --bin "$BIN"
+RUN cp "target/release/$BIN" /usr/local/bin/service
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/local/bin/service /usr/local/bin/service
+# Symlink under each expected binary name so the compose `command:` works as-is.
+RUN ln -s /usr/local/bin/service /usr/local/bin/aethel-proxy \
+    && ln -s /usr/local/bin/service /usr/local/bin/aethel-safekeeper \
+    && ln -s /usr/local/bin/service /usr/local/bin/aethel-pageserver
+ENTRYPOINT []

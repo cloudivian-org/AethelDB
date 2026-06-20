@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Recommended toolchain for contributors using rustup. The CI image and the
+# apt-provided compiler may lag this; the workspace MSRV is pinned to 1.75 in
+# Cargo.toml so the tree must always build on at least that version.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

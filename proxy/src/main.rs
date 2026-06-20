@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The AethelDB Authors
+
+//! # aethel-proxy — the activation proxy (binary)
+//!
+//! Wires the [`proxy`] library to a command line: builds the tenant registry
+//! and activator from flags, starts the idle reaper, and runs the accept loop.
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::Context;
+use clap::Parser;
+use tokio::net::TcpListener;
+use tracing::info;
+
+use proxy::activator::{Activator, CommandActivator, NoopActivator};
+use proxy::idle::{self, ReaperConfig};
+use proxy::proxy::{serve, HealthConfig, Proxy};
+use proxy::tenant::{Registry, TenantState};
+
+/// Command-line / environment configuration for the proxy.
+#[derive(Debug, Parser)]
+#[command(name = "aethel-proxy", version, about = "AethelDB activation proxy")]
+struct Args {
+    /// Address to accept PostgreSQL client connections on.
+    #[arg(long, env = "SP_PROXY_LISTEN", default_value = "0.0.0.0:5432")]
+    listen: SocketAddr,
+
+    /// A tenant routing entry, `name=host:port`. Repeatable, one per tenant.
+    /// Tenants start "asleep" so the first connection exercises the wake path.
+    #[arg(long = "tenant", value_name = "NAME=ADDR")]
+    tenants: Vec<String>,
+
+    /// Shell command run to start a tenant's compute. `{tenant}` is substituted.
+    /// If unset, a no-op activator is used (compute managed externally).
+    #[arg(long, env = "SP_PROXY_START_COMMAND")]
+    start_command: Option<String>,
+
+    /// Shell command run to stop a tenant's compute. `{tenant}` is substituted.
+    #[arg(long, env = "SP_PROXY_STOP_COMMAND")]
+    stop_command: Option<String>,
+
+    /// Wake budget: hold the client this long waiting for compute to be ready.
+    #[arg(long, env = "SP_PROXY_WAKE_BUDGET_MS", default_value_t = 500)]
+    wake_budget_ms: u64,
+
+    /// Scale a tenant to zero after this many seconds with no active connections.
+    #[arg(long, env = "SP_PROXY_IDLE_SECS", default_value_t = 300)]
+    idle_secs: u64,
+
+    /// How often the idle reaper scans, in seconds.
+    #[arg(long, env = "SP_PROXY_REAP_TICK_SECS", default_value_t = 10)]
+    reap_tick_secs: u64,
+}
+
+/// Parse a `name=host:port` tenant spec into a registry entry.
+fn parse_tenant(spec: &str) -> anyhow::Result<(String, TenantState)> {
+    let (name, addr) = spec
+        .split_once('=')
+        .with_context(|| format!("tenant spec `{spec}` must be NAME=host:port"))?;
+    let addr: SocketAddr = addr
+        .parse()
+        .with_context(|| format!("invalid backend address in tenant spec `{spec}`"))?;
+    // Start asleep: the first connection triggers the activator + readiness probe.
+    Ok((name.to_owned(), TenantState::new(addr, false)))
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    init_tracing();
+    let args = Args::parse();
+
+    // Build the tenant registry from --tenant flags.
+    let mut entries = Vec::new();
+    for spec in &args.tenants {
+        entries.push(parse_tenant(spec)?);
+    }
+    let registry = Arc::new(Registry::from_iter(entries));
+
+    // Choose an activator: command-based if start/stop commands were provided.
+    let activator: Arc<dyn Activator> = match (&args.start_command, &args.stop_command) {
+        (Some(start), Some(stop)) => Arc::new(CommandActivator::new(start.clone(), stop.clone())),
+        (None, None) => Arc::new(NoopActivator),
+        _ => anyhow::bail!("--start-command and --stop-command must be set together"),
+    };
+
+    let health = HealthConfig {
+        budget: Duration::from_millis(args.wake_budget_ms),
+        ..HealthConfig::default()
+    };
+    let proxy = Proxy::new(registry, activator, health);
+
+    info!(
+        listen = %args.listen,
+        tenants = proxy.registry().len(),
+        wake_budget_ms = args.wake_budget_ms,
+        idle_secs = args.idle_secs,
+        "starting aethel-proxy"
+    );
+
+    // Spawn the idle reaper.
+    let reaper_cfg = ReaperConfig {
+        idle_after: Duration::from_secs(args.idle_secs),
+        tick: Duration::from_secs(args.reap_tick_secs),
+    };
+    tokio::spawn(idle::run(proxy.clone(), reaper_cfg));
+
+    // Bind and serve.
+    let listener = TcpListener::bind(args.listen)
+        .await
+        .with_context(|| format!("failed to bind {}", args.listen))?;
+    info!(addr = %args.listen, "accepting connections");
+    serve(proxy, listener).await
+}
+
+/// Configure structured logging. Honors `RUST_LOG`, defaulting to `info`.
+fn init_tracing() {
+    use tracing_subscriber::{fmt, EnvFilter};
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    fmt().with_env_filter(filter).with_target(false).init();
+}

@@ -1,0 +1,3 @@
+# Keep formatting deterministic across contributors.
+edition = "2021"
+max_width = 100

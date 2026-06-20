@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Root manifest for the AethelDB workspace. This is a *virtual* manifest:
+# it defines no package of its own, only the set of member crates and the
+# dependency versions that are shared across them. Keeping versions here (and
+# referencing them with `<dep>.workspace = true` in each crate) guarantees that
+# the proxy, safekeeper, and pageserver all link the exact same revision of
+# tokio, serde, etc. — which matters because they exchange wire-format bytes.
+
+[workspace]
+resolver = "2"
+members = [
+    "common",     # shared types: LSN, tenant/timeline IDs, page keys, wire errors
+    "proxy",      # Step 2: scale-to-zero activation proxy (Tokio TCP)
+    "safekeeper", # Step 4: WAL ingest + consensus durability buffer
+    "pageserver", # Step 5: LSM-style page reconstruction + S3 offload
+]
+
+# Settings inherited by every member crate via `<field>.workspace = true`.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+authors = ["The AethelDB Authors"]
+repository = "https://github.com/cloudivian-org/AethelDB"
+description = "Decoupled, serverless PostgreSQL: separated compute and page storage."
+
+# Single source of truth for third-party crate versions. Pinned conservatively
+# so the tree builds on the project's MSRV (Rust 1.75).
+[workspace.dependencies]
+# Async runtime + networking. "full" pulls in net, time, sync, macros, rt-multi-thread.
+tokio = { version = "1.36", features = ["full"] }
+# Zero-copy byte buffers for framing WAL records and 8 KiB page images.
+bytes = "1"
+# Structured, leveled logging. env-filter lets operators set RUST_LOG at runtime.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Ergonomic error handling: anyhow for application binaries, thiserror for typed
+# library errors that cross crate boundaries.
+anyhow = "1"
+thiserror = "1"
+# Derive-based CLI parsing for each service binary.
+clap = { version = "~4.4", features = ["derive", "env"] }
+# (De)serialization for config files and control-plane RPC payloads.
+serde = { version = "1", features = ["derive"] }
+# Lets the Activator trait expose `async fn` while staying object-safe (`dyn`),
+# so the command-based and Docker-based activators are swappable at runtime.
+async-trait = "0.1"
+# Internal crate, referenced by every service.
+common = { path = "common" }
+
+# Optimized profile for the latency-sensitive data path. Thin LTO + a single
+# codegen unit trade compile time for a faster binary; we keep unwinding panics
+# (rather than abort) so a single poisoned connection cannot take down a node.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"   # keep symbol info for prod flamegraphs, small size cost

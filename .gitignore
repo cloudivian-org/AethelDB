@@ -1,0 +1,22 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Postgres source checkout + build tree (Step 1 compute layer)
+/compute/postgres-src/
+/compute/install/
+
+# Local object-store and node data
+/.data/
+*.log
+
+# Python e2e venv
+/e2e-tests/.venv/
+__pycache__/
+*.pyc
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/

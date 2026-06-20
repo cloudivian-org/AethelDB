@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+
+[package]
+name = "proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Scale-to-zero activation proxy: wakes compute on connect, sleeps it when idle."
+
+# The crate is both a library (so the proxy internals can be integration-tested)
+# and the `aethel-proxy` binary that wires those internals to a CLI.
+[lib]
+name = "proxy"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aethel-proxy"
+path = "src/main.rs"
+
+[dependencies]
+common = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+# The integration tests drive the proxy over real sockets.
+tokio = { workspace = true }

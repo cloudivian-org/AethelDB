@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# End-to-end test dependencies for AethelDB (Step 6).
+pytest>=8.0
+psycopg[binary]>=3.1     # PostgreSQL client to drive queries through the proxy
+requests>=2.31           # control-plane / object-store assertions
+docker>=7.0              # inspect compute container lifecycle (scale-to-zero)

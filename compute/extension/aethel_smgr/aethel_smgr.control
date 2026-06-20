@@ -1,0 +1,6 @@
+# aethel_smgr extension control file
+comment = 'Network storage manager (remote page reads) for AethelDB'
+default_version = '1.0'
+module_pathname = '$libdir/aethel_smgr'
+relocatable = true
+superuser = true

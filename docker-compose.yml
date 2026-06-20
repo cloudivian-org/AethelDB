@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Local development stack. This wires the data-plane services together plus a
+# MinIO object store standing in for S3. The compute container is intentionally
+# NOT a long-running service here: the proxy starts and stops compute nodes
+# on demand (scale-to-zero), so it is built as an image and launched by the
+# proxy at runtime rather than declared as an always-on service.
+
+services:
+  # S3-compatible object store for the pageserver's immutable layer files (Step 5).
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9090"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9001:9000"   # S3 API  (matches aethel-pageserver --object-store default)
+      - "9090:9090"   # web console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  safekeeper:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        BIN: aethel-safekeeper
+    command: ["aethel-safekeeper", "--listen", "0.0.0.0:6500", "--data-dir", "/data"]
+    ports:
+      - "6500:6500"
+    volumes:
+      - safekeeper-data:/data
+
+  pageserver:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        BIN: aethel-pageserver
+    command:
+      - "aethel-pageserver"
+      - "--listen"
+      - "0.0.0.0:6400"
+      - "--ingest-listen"
+      - "0.0.0.0:6401"
+      - "--object-dir"
+      - "/data/objstore"
+    depends_on:
+      minio:
+        condition: service_healthy
+    ports:
+      - "6400:6400"
+      - "6401:6401"
+    volumes:
+      - pageserver-data:/data
+
+  proxy:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        BIN: aethel-proxy
+    command: ["aethel-proxy", "--listen", "0.0.0.0:5432"]
+    # The proxy needs the host Docker socket to start/stop compute containers.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - safekeeper
+      - pageserver
+    ports:
+      - "5432:5432"
+
+volumes:
+  minio-data:
+  safekeeper-data:
+  pageserver-data:
