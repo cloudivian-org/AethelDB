@@ -51,10 +51,24 @@ Chaining PgBouncer behind the activation proxy keeps each layer focused; a Rust
 pool crate (`deadpool` / `bb8`) is an option for in-process reuse later. This is
 a deliberate decision not to build a PgBouncer equivalent from scratch.
 
+## Proxy-side SCRAM authentication
+
+When a tenant has a stored SCRAM-SHA-256 verifier, the proxy authenticates the
+client *before* waking compute (`proxy/src/scram.rs`), so a bad credential is
+rejected without a cold start — a real scale-to-zero protection. On success the
+proxy sends `AuthenticationSASLFinal` but **not** `AuthenticationOk`: it forwards
+the startup to a `trust`-auth backend on the trusted local network, whose
+`AuthenticationOk` completes the client handshake. The backend therefore re-uses
+the proxy's authentication (no double auth, no session bridging).
+
+Implemented over PostgreSQL's SASL framing with `hmac`/`sha2`; only the
+channel-binding-free `n,,` mode (`SCRAM-SHA-256`, not `-PLUS`). Verified with a
+full client↔server round-trip and a proxy gate test (bad password rejected with
+no wake; good password authenticates and splices).
+
 ## Next
 
-- **Auth passthrough** — forward SCRAM-SHA-256 between client and backend (or
-  terminate auth at the proxy against a tenant credential store).
 - **CancelRequest routing** — track per-session backend key data so cancels
   reach the right backend.
 - **mTLS to the backend** — if compute ever runs off the trusted local network.
+- **Channel binding** (`SCRAM-SHA-256-PLUS`) once TLS is mandatory.

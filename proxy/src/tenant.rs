@@ -26,6 +26,9 @@ pub struct TenantState {
     active_conns: AtomicU64,
     /// Wall-clock time of the most recent activity (connect or disconnect).
     last_active: Mutex<Instant>,
+    /// Optional SCRAM verifier: when present, the proxy authenticates the client
+    /// against it before waking compute.
+    scram: Option<crate::scram::ScramSecret>,
 }
 
 impl TenantState {
@@ -36,7 +39,18 @@ impl TenantState {
             running: AtomicBool::new(running),
             active_conns: AtomicU64::new(0),
             last_active: Mutex::new(Instant::now()),
+            scram: None,
         }
+    }
+
+    /// Like [`new`](Self::new), but with a SCRAM verifier for proxy-side auth.
+    pub fn with_scram(backend: SocketAddr, running: bool, scram: crate::scram::ScramSecret) -> Self {
+        TenantState { scram: Some(scram), ..Self::new(backend, running) }
+    }
+
+    /// The tenant's SCRAM verifier, if proxy-side authentication is enabled.
+    pub fn scram(&self) -> Option<&crate::scram::ScramSecret> {
+        self.scram.as_ref()
     }
 
     /// Backend socket address.
