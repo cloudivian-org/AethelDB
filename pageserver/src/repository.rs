@@ -15,7 +15,7 @@
 //! **image** at or before `Y`, and replays the **deltas** after it in LSN order
 //! — producing the exact 8 KiB block as of `Y`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use common::{Lsn, PageKey, RelTag};
@@ -25,6 +25,20 @@ use crate::layer::{Layer, LayerId};
 use crate::page::{Modification, PageError, PageVersion, WalRecord};
 use crate::waldecode::{decode_wal_record, DecodedWalRecord, WalDecodeError, WalStreamDecoder};
 use crate::walredo::{RedoError, RustApplyRedoManager, WalRedoManager};
+
+/// What a compaction pass did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompactionStats {
+    /// Frozen layers before the pass.
+    pub layers_before: usize,
+    /// Frozen layers after (the compacted layers replace them).
+    pub layers_after: usize,
+    /// Page versions dropped by GC.
+    pub versions_removed: usize,
+    /// Ids of layers that were replaced — their object-store files are now
+    /// orphaned and may be deleted by the caller.
+    pub removed_layer_ids: Vec<LayerId>,
+}
 
 /// Outcome of a page lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,6 +246,66 @@ impl Repository {
     pub fn layer_count(&self) -> usize {
         self.inner.lock().unwrap().layers.len()
     }
+
+    /// Compact frozen layers into one, GC-pruning any page version that can
+    /// never be read at an LSN ≥ `gc_horizon`.
+    ///
+    /// For each page, the latest base (full image / `will_init`) at or before
+    /// `gc_horizon` is kept along with everything after it; older versions are
+    /// unreachable within the retention window and are dropped. This bounds
+    /// history and collapses the layer stack (read amplification). The caller
+    /// must not serve reads below `gc_horizon` after this returns.
+    pub fn compact(&self, gc_horizon: Lsn) -> CompactionStats {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.layers.is_empty() {
+            return CompactionStats::default();
+        }
+        let layers_before = inner.layers.len();
+        let removed_layer_ids: Vec<LayerId> = inner.layers.iter().map(|l| l.id()).collect();
+
+        // Merge every frozen layer's entries. LSNs are unique per write, so keys
+        // don't collide across layers.
+        let mut merged: BTreeMap<(PageKey, Lsn), PageVersion> = BTreeMap::new();
+        for layer in &inner.layers {
+            for (k, v) in layer.entries() {
+                merged.insert(*k, v.clone());
+            }
+        }
+        let before = merged.len();
+
+        // GC: per page, find the latest base at or before the horizon, then drop
+        // every version of that page strictly older than it.
+        let mut base_lsn: HashMap<PageKey, Lsn> = HashMap::new();
+        for ((key, lsn), v) in merged.iter() {
+            if *lsn <= gc_horizon && v.is_base() {
+                base_lsn.insert(*key, *lsn); // ascending scan -> latest wins
+            }
+        }
+        let drop_keys: Vec<(PageKey, Lsn)> = merged
+            .iter()
+            .filter(|((key, lsn), _)| base_lsn.get(key).is_some_and(|b| lsn < b))
+            .map(|((key, lsn), _)| (*key, *lsn))
+            .collect();
+        for k in &drop_keys {
+            merged.remove(k);
+        }
+        let versions_removed = before - merged.len();
+
+        // Replace the layer stack with a single compacted layer.
+        inner.layers = if merged.is_empty() {
+            Vec::new()
+        } else {
+            let id = inner.next_layer_id;
+            inner.next_layer_id += 1;
+            vec![Arc::new(Layer::new(id, merged))]
+        };
+        for oid in &removed_layer_ids {
+            inner.uploaded.remove(oid);
+        }
+        let layers_after = inner.layers.len();
+        debug!(layers_before, layers_after, versions_removed, %gc_horizon, "compacted layers");
+        CompactionStats { layers_before, layers_after, versions_removed, removed_layer_ids }
+    }
 }
 
 /// Map a decoded WAL record to one ingest [`Modification`] per touched block.
@@ -366,6 +440,65 @@ mod tests {
         ]);
         // Two versions reached the threshold of 2 -> one frozen layer.
         assert_eq!(repo.layer_count(), 1);
+    }
+
+    #[test]
+    fn compaction_collapses_history_and_bounds_reads() {
+        let repo = Repository::new(1); // freeze each write into its own layer
+        let img = |byte: u8, lsn: u64| Modification {
+            rel: rel(),
+            block: 0,
+            lsn: Lsn(lsn),
+            version: PageVersion::Image(vec![byte; PAGE_SIZE]),
+        };
+        let d = |byte: u8, lsn: u64| Modification {
+            rel: rel(),
+            block: 0,
+            lsn: Lsn(lsn),
+            version: PageVersion::Delta(vec![ByteEdit { offset: 0, data: vec![byte] }]),
+        };
+        repo.ingest([img(7, 10)]); // base
+        repo.ingest([d(0xAA, 20)]); // delta over base@10
+        repo.ingest([img(1, 30)]); // a newer full image supersedes
+        repo.ingest([d(0xBB, 40)]); // delta over image@30
+        assert!(repo.layer_count() >= 4);
+
+        // Compact at horizon 35: the latest base ≤ 35 is image@30, so image@10
+        // and delta@20 become unreachable and are dropped.
+        let stats = repo.compact(Lsn(35));
+        assert_eq!(stats.layers_after, 1, "stack collapses to one layer");
+        assert_eq!(stats.versions_removed, 2, "image@10 and delta@20 pruned");
+        assert_eq!(stats.removed_layer_ids.len(), stats.layers_before);
+
+        // Reads within the retention window are unchanged.
+        match repo.get_page(key(0), Lsn(40)).unwrap() {
+            PageLookup::Page(p) => {
+                assert_eq!(p[0], 0xBB); // delta@40
+                assert_eq!(p[1], 1); // from image@30
+            }
+            other => panic!("{other:?}"),
+        }
+        match repo.get_page(key(0), Lsn(30)).unwrap() {
+            PageLookup::Page(p) => assert!(p.iter().all(|&b| b == 1)),
+            other => panic!("{other:?}"),
+        }
+        // Below the horizon, the collapsed history is gone.
+        assert_eq!(repo.get_page(key(0), Lsn(20)).unwrap(), PageLookup::NotFound);
+    }
+
+    #[test]
+    fn compaction_keeps_deltas_without_a_local_base() {
+        // A delta with no base ≤ horizon must be retained (it may sit on top of
+        // an inherited base on a branch).
+        let repo = Repository::new(1);
+        repo.ingest([Modification {
+            rel: rel(),
+            block: 0,
+            lsn: Lsn(30),
+            version: PageVersion::Delta(vec![ByteEdit { offset: 0, data: vec![0x55] }]),
+        }]);
+        let stats = repo.compact(Lsn(100));
+        assert_eq!(stats.versions_removed, 0, "a base-less delta is never pruned");
     }
 
     // ---- Real-WAL ingest (Phase 2) ----

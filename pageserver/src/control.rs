@@ -83,6 +83,14 @@ fn exec(tenant: &Arc<Tenant>, line: &str) -> String {
             ids.sort();
             format!("ok {}", ids.join(" "))
         }
+        Some("gc") => match parts.next().and_then(|s| s.parse::<u64>().ok()) {
+            Some(horizon) => {
+                let stats = tenant.gc(Lsn(horizon));
+                let removed: usize = stats.iter().map(|(_, s)| s.versions_removed).sum();
+                format!("ok gc @ {horizon}: {} timelines, {removed} versions removed", stats.len())
+            }
+            None => "err usage: gc <horizon-lsn>".to_string(),
+        },
         Some(other) => format!("err unknown command '{other}'"),
         None => "err empty command".to_string(),
     }
@@ -114,6 +122,9 @@ mod tests {
         let listed = exec(&tenant, "list");
         assert!(listed.contains(&main) && listed.contains(&dev));
 
+        // GC is reachable over the control endpoint.
+        assert!(exec(&tenant, "gc 50").starts_with("ok gc"));
+
         // The branch really exists in the tenant.
         let branch = tenant.get_timeline(id(2)).expect("branch created");
         assert_eq!(branch.ancestor_timeline(), Some(id(1)));
@@ -126,6 +137,7 @@ mod tests {
         assert!(exec(&tenant, "create").starts_with("err usage"));
         assert!(exec(&tenant, "branch only-one-arg").starts_with("err usage"));
         assert!(exec(&tenant, "create not-hex").starts_with("err usage"));
+        assert!(exec(&tenant, "gc not-a-number").starts_with("err usage"));
         assert!(exec(&tenant, "frobnicate").starts_with("err unknown"));
         assert_eq!(exec(&tenant, ""), "err empty command");
     }

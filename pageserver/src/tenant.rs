@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use common::{Lsn, TimelineId};
 use thiserror::Error;
 
-use crate::repository::Repository;
+use crate::repository::{CompactionStats, Repository};
 use crate::timeline::Timeline;
 use crate::walredo::{RustApplyRedoManager, WalRedoManager};
 
@@ -94,6 +94,37 @@ impl Tenant {
     /// All timeline ids currently known to this tenant.
     pub fn timeline_ids(&self) -> Vec<TimelineId> {
         self.timelines.lock().unwrap().keys().copied().collect()
+    }
+
+    /// Compact + GC every timeline at `requested_horizon`.
+    ///
+    /// A timeline's effective horizon is lowered so it never collects history a
+    /// child branch still depends on: a child reads its parent at the branch
+    /// point, so each parent retains down to the minimum `ancestor_lsn` of its
+    /// direct children. (Deeper descendants are covered transitively — each
+    /// level pins its own parent.) Returns per-timeline compaction stats.
+    pub fn gc(&self, requested_horizon: Lsn) -> Vec<(TimelineId, CompactionStats)> {
+        let timelines = self.timelines.lock().unwrap();
+
+        // The lowest branch point pinned on each parent timeline.
+        let mut child_pin: HashMap<TimelineId, Lsn> = HashMap::new();
+        for tl in timelines.values() {
+            if let (Some(parent), Some(alsn)) = (tl.ancestor_timeline(), tl.ancestor_lsn()) {
+                let pin = child_pin.entry(parent).or_insert(Lsn(u64::MAX));
+                *pin = (*pin).min(alsn);
+            }
+        }
+
+        timelines
+            .iter()
+            .map(|(id, tl)| {
+                let horizon = match child_pin.get(id) {
+                    Some(pin) => requested_horizon.min(*pin),
+                    None => requested_horizon,
+                };
+                (*id, tl.compact(horizon))
+            })
+            .collect()
     }
 }
 
@@ -231,6 +262,39 @@ mod tests {
             tenant.branch_timeline(tl(2), tl(9), Lsn(10)).err(),
             Some(TenantError::NoSuchParent(tl(9))),
         );
+    }
+
+    #[test]
+    fn gc_collapses_main_line_history_without_branches() {
+        let tenant = Tenant::new(1); // freeze each write
+        let main = tenant.create_timeline(tl(1)).unwrap();
+        main.ingest([image(7, 10, 0), delta(0, 0xAA, 20, 0), image(1, 30, 0), delta(0, 0xBB, 40, 0)]);
+
+        let stats = tenant.gc(Lsn(35));
+        let removed: usize = stats.iter().map(|(_, s)| s.versions_removed).sum();
+        assert_eq!(removed, 2, "image@10 + delta@20 collapsed");
+        assert_eq!(page(&main, 0, 40)[0], 0xBB, "reads within retention unchanged");
+    }
+
+    #[test]
+    fn gc_respects_branch_pins() {
+        let tenant = Tenant::new(1);
+        let main = tenant.create_timeline(tl(1)).unwrap();
+        // base@10 (all 7s), delta@20, a newer full image@30, delta@40.
+        main.ingest([image(7, 10, 0), delta(1, 0x11, 20, 0), image(9, 30, 0), delta(0, 0xBB, 40, 0)]);
+        // Branch at LSN 15 — between base@10 and delta@20. The branch reads main@15.
+        let branch = tenant.branch_timeline(tl(2), tl(1), Lsn(15)).unwrap();
+
+        // GC at a high horizon. Unpinned, main would drop everything below
+        // image@30 and the branch's read at 15 would break. The branch pin lowers
+        // main's effective horizon to 15, so image@10 is retained.
+        tenant.gc(Lsn(100));
+
+        assert_eq!(page(&branch, 0, 100)[0], 7, "branch still reconstructs main@15");
+        // Main itself still serves its own latest state.
+        let p = page(&main, 0, 100);
+        assert_eq!(p[0], 0xBB);
+        assert!(p[2..].iter().all(|&b| b == 9), "image@30 base preserved on main");
     }
 
     #[test]

@@ -49,6 +49,11 @@ impl Layer {
         self.entries.is_empty()
     }
 
+    /// All `(page, lsn) -> version` entries, for compaction/merge.
+    pub(crate) fn entries(&self) -> &BTreeMap<(PageKey, Lsn), PageVersion> {
+        &self.entries
+    }
+
     /// Iterate the versions of `key` with LSN in `[0, lsn]`, ascending.
     pub fn range(&self, key: PageKey, lsn: Lsn) -> impl Iterator<Item = (Lsn, &PageVersion)> {
         self.entries

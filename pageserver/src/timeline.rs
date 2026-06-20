@@ -25,7 +25,7 @@ use std::sync::Arc;
 use common::{Lsn, PageKey, RelTag, TimelineId};
 
 use crate::page::{Modification, PageError};
-use crate::repository::{PageLookup, Repository};
+use crate::repository::{CompactionStats, PageLookup, Repository};
 use crate::waldecode::WalDecodeError;
 
 /// The parent of a branched timeline and the LSN at which it diverged.
@@ -96,6 +96,13 @@ impl Timeline {
     /// Freeze this branch's memtable (test/diagnostic helper).
     pub fn freeze(&self) {
         self.repo.freeze();
+    }
+
+    /// Compact + GC this branch's frozen layers at `gc_horizon`. The caller (the
+    /// tenant) is responsible for choosing a horizon that respects any child
+    /// branch's dependency on this timeline's history.
+    pub fn compact(&self, gc_horizon: Lsn) -> CompactionStats {
+        self.repo.compact(gc_horizon)
     }
 
     /// Reconstruct page `key` at `lsn` on this branch, inheriting from the
