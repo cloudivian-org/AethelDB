@@ -11,10 +11,16 @@ Status:
 - **Phase 2 complete (library)** — `PageVersion::WalRecord` storage variant, the
   `WalRedoManager` trait + `RustApplyRedoManager` (`pageserver/src/walredo.rs`),
   reconstruction routed through the redo backend, and `Repository::ingest_wal`
-  feeding real WAL bytes through framing → decode → store → reconstruct. The
-  network `IngestWal` endpoint is deferred to pair with Phase 4's `WalReceiver`.
-- **Phase 3 / 4** — the Postgres wal-redo process and the safekeeper→pageserver
-  receiver are next.
+  feeding real WAL bytes through framing → decode → store → reconstruct.
+- **Phase 4 complete** — the safekeeper→page-server link is live. A WAL-read
+  protocol (`common::wal_service::ReadRequest`/`ReadResponse`), a safekeeper read
+  endpoint (`Safekeeper::handle_read`), and a streaming `WalReceiver`
+  (`pageserver/src/walreceiver.rs`) with a long-lived `WalStreamDecoder` pull
+  committed WAL and ingest it via `Repository::ingest_record`. Wired into the
+  `aethel-pageserver` binary behind `--safekeeper`. An end-to-end test drives a
+  real safekeeper + receiver + repository over sockets and reconstructs a page.
+- **Phase 3 next** — the Postgres wal-redo process, after which non-FPI WAL
+  records (not just full-page images) materialize correctly.
 
 ## Why
 

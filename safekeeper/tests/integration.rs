@@ -12,7 +12,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::wal_service::{AppendRequest, AppendResponse, RESPONSE_LEN, STATUS_OK};
+use common::wal_service::{
+    AppendRequest, AppendResponse, ReadRequest, ReadResponse, READ_RESPONSE_HEADER_LEN,
+    RESPONSE_LEN, STATUS_OK,
+};
 use common::{Lsn, TenantId, TimelineId};
 use safekeeper::consensus::Consensus;
 use safekeeper::replicator::LocalSimReplicator;
@@ -67,6 +70,22 @@ async fn send_append(stream: &mut TcpStream, req: &AppendRequest) -> AppendRespo
     AppendResponse::decode(&resp).unwrap()
 }
 
+async fn send_read(stream: &mut TcpStream, start: u64, max: u32) -> ReadResponse {
+    let req = ReadRequest {
+        tenant: TenantId::ZERO,
+        timeline: TimelineId::ZERO,
+        start_lsn: Lsn(start),
+        max_bytes: max,
+    };
+    stream.write_all(&req.encode()).await.unwrap();
+    let mut full = vec![0u8; READ_RESPONSE_HEADER_LEN];
+    stream.read_exact(&mut full).await.unwrap();
+    let plen = ReadResponse::payload_len(&full).unwrap();
+    full.resize(READ_RESPONSE_HEADER_LEN + plen, 0);
+    stream.read_exact(&mut full[READ_RESPONSE_HEADER_LEN..]).await.unwrap();
+    ReadResponse::decode(&full).unwrap()
+}
+
 #[tokio::test]
 async fn ingest_advances_flush_and_commit_under_quorum() {
     let dir = TempDir::new("quorum");
@@ -118,4 +137,44 @@ async fn lone_safekeeper_commits_on_its_own() {
     })
     .await;
     assert!(outcome.is_ok(), "solo test timed out");
+}
+
+#[tokio::test]
+async fn read_back_returns_committed_wal() {
+    let dir = TempDir::new("readback");
+    let storage = WalStorage::open(wal_cfg(&dir)).unwrap();
+    let consensus = Consensus::new(1, vec![1]);
+    let replicator = Arc::new(LocalSimReplicator::new(vec![]));
+    let sk = Safekeeper::new(storage, consensus, replicator);
+    let addr = spawn_safekeeper(sk).await;
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        // Commit 19 bytes of WAL.
+        let a = send_append(&mut stream, &append(0, b"first-wal-runsecond")).await;
+        assert_eq!(a.commit_lsn, Lsn(19));
+
+        // Full read from the start.
+        let r = send_read(&mut stream, 0, 1000).await;
+        assert_eq!(r.status, STATUS_OK);
+        assert_eq!(r.commit_lsn, Lsn(19));
+        assert_eq!(r.start_lsn, Lsn(0));
+        assert_eq!(r.payload, b"first-wal-runsecond");
+
+        // Read from a cursor partway through.
+        let r2 = send_read(&mut stream, 13, 1000).await;
+        assert_eq!(r2.start_lsn, Lsn(13));
+        assert_eq!(r2.payload, b"second");
+
+        // Caught up: empty payload, but the commit position is still reported.
+        let r3 = send_read(&mut stream, 19, 1000).await;
+        assert!(r3.payload.is_empty());
+        assert_eq!(r3.commit_lsn, Lsn(19));
+
+        // max_bytes caps the chunk size.
+        let r4 = send_read(&mut stream, 0, 5).await;
+        assert_eq!(r4.payload, b"first");
+    })
+    .await;
+    assert!(outcome.is_ok(), "read-back test timed out");
 }

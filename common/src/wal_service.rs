@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The AethelDB Authors
 
-//! The compute -> safekeeper WAL ingest protocol.
+//! The safekeeper WAL protocols: compute→safekeeper ingest, and
+//! safekeeper→page-server read-back.
 //!
-//! The compute node streams its Write-Ahead Log to the safekeepers as a series
-//! of [`AppendRequest`]s. Each carries a contiguous run of WAL bytes starting at
-//! a given LSN, tagged with the proposer's `term` (the consensus epoch). The
-//! safekeeper persists the bytes durably, replicates to its peers, and replies
-//! with an [`AppendResponse`] reporting how far it has flushed and the new
-//! quorum-committed LSN — the position the compute node may treat as durable.
+//! **Ingest.** The compute node streams its Write-Ahead Log to the safekeepers
+//! as a series of [`AppendRequest`]s. Each carries a contiguous run of WAL bytes
+//! starting at a given LSN, tagged with the proposer's `term` (the consensus
+//! epoch). The safekeeper persists the bytes durably, replicates to its peers,
+//! and replies with an [`AppendResponse`] reporting how far it has flushed and
+//! the new quorum-committed LSN — the position the compute node may treat as
+//! durable.
+//!
+//! **Read-back.** The page server pulls *committed* WAL back out with a
+//! [`ReadRequest`] from a cursor LSN; the safekeeper answers with a
+//! [`ReadResponse`] carrying a chunk of `[start_lsn, commit_lsn)` plus its
+//! current commit position. Both message kinds share a one-byte type tag in a
+//! common 8-byte prefix so a single connection can carry either.
 //!
 //! Like the page-service protocol, this is a fixed big-endian layout so the C
-//! WAL proposer and the Rust safekeeper agree byte-for-byte. It is defined and
+//! WAL proposer and the Rust services agree byte-for-byte. It is defined and
 //! round-trip tested here.
 
 use crate::error::{Error, Result};
@@ -23,8 +31,10 @@ pub const MAGIC: u32 = 0x5357_4C31;
 /// Protocol version.
 pub const VERSION: u8 = 1;
 
-/// Request type tag: append WAL.
+/// Request type tag: append WAL (compute → safekeeper).
 pub const TYPE_APPEND: u8 = 1;
+/// Request type tag: read committed WAL (page server → safekeeper).
+pub const TYPE_READ: u8 = 2;
 
 /// Response status: success.
 pub const STATUS_OK: u8 = 0;
@@ -33,10 +43,31 @@ pub const STATUS_STALE_TERM: u8 = 1;
 /// Response status: a non-contiguous or otherwise invalid append.
 pub const STATUS_REJECTED: u8 = 2;
 
+/// Length of the common prefix every message starts with: magic(4) version(1)
+/// type(1) reserved(2). Enough to learn the message type before reading on.
+pub const PREFIX_LEN: usize = 8;
 /// Fixed size of an [`AppendRequest`] header (the payload follows it).
 pub const REQUEST_HEADER_LEN: usize = 60;
 /// Fixed size of an [`AppendResponse`].
 pub const RESPONSE_LEN: usize = 32;
+/// Fixed size of a [`ReadRequest`] (no payload follows).
+pub const READ_REQUEST_LEN: usize = 52;
+/// Fixed size of a [`ReadResponse`] header (the WAL payload follows it).
+pub const READ_RESPONSE_HEADER_LEN: usize = 28;
+
+/// Validate the common prefix and return the message type byte.
+pub fn message_type(prefix: &[u8]) -> Result<u8> {
+    if prefix.len() < PREFIX_LEN {
+        return Err(Error::parse("WAL message prefix too short"));
+    }
+    if get_u32(prefix, 0) != MAGIC {
+        return Err(Error::parse("bad WAL protocol magic"));
+    }
+    if prefix[4] != VERSION {
+        return Err(Error::parse("unsupported WAL protocol version"));
+    }
+    Ok(prefix[5])
+}
 
 /// A run of WAL bytes streamed from compute to a safekeeper.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +95,34 @@ pub struct AppendResponse {
     pub flush_lsn: Lsn,
     /// The quorum-committed LSN: durable on a majority of safekeepers.
     pub commit_lsn: Lsn,
+}
+
+/// A page server's request for committed WAL starting at a cursor LSN.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadRequest {
+    /// Tenant whose WAL to read.
+    pub tenant: TenantId,
+    /// Timeline (branch) to read.
+    pub timeline: TimelineId,
+    /// LSN to begin reading from (the page server's ingest cursor).
+    pub start_lsn: Lsn,
+    /// Maximum number of WAL bytes to return in one chunk.
+    pub max_bytes: u32,
+}
+
+/// A safekeeper's reply carrying a chunk of committed WAL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadResponse {
+    /// Status code (see `STATUS_*`).
+    pub status: u8,
+    /// The safekeeper's current quorum-committed LSN.
+    pub commit_lsn: Lsn,
+    /// LSN of the first byte of `payload` (may be > the requested `start_lsn`
+    /// if it had fallen below the retained range).
+    pub start_lsn: Lsn,
+    /// Committed WAL bytes in `[start_lsn, start_lsn + payload.len())`; empty
+    /// when the reader is already caught up to `commit_lsn`.
+    pub payload: Vec<u8>,
 }
 
 fn put_u32(b: &mut Vec<u8>, v: u32) {
@@ -169,6 +228,81 @@ impl AppendResponse {
     }
 }
 
+impl ReadRequest {
+    /// Encode the fixed-size read request.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(READ_REQUEST_LEN);
+        put_u32(&mut b, MAGIC);
+        b.push(VERSION);
+        b.push(TYPE_READ);
+        b.push(0); // reserved
+        b.push(0); // reserved
+        b.extend_from_slice(self.tenant.as_bytes()); // 8..24
+        b.extend_from_slice(self.timeline.as_bytes()); // 24..40
+        put_u64(&mut b, self.start_lsn.raw()); // 40..48
+        put_u32(&mut b, self.max_bytes); // 48..52
+        b
+    }
+
+    /// Decode a fixed-size read request buffer.
+    pub fn decode(buf: &[u8]) -> Result<ReadRequest> {
+        if buf.len() < READ_REQUEST_LEN {
+            return Err(Error::parse("read request too short"));
+        }
+        if message_type(buf)? != TYPE_READ {
+            return Err(Error::parse("unexpected WAL message type"));
+        }
+        Ok(ReadRequest {
+            tenant: TenantId::from_bytes(buf[8..24].try_into().unwrap()),
+            timeline: TimelineId::from_bytes(buf[24..40].try_into().unwrap()),
+            start_lsn: Lsn(get_u64(buf, 40)),
+            max_bytes: get_u32(buf, 48),
+        })
+    }
+}
+
+impl ReadResponse {
+    /// Encode the response (header + WAL payload).
+    pub fn encode(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(READ_RESPONSE_HEADER_LEN + self.payload.len());
+        put_u32(&mut b, MAGIC);
+        b.push(VERSION);
+        b.push(self.status);
+        b.push(0); // reserved
+        b.push(0); // reserved
+        put_u64(&mut b, self.commit_lsn.raw()); // 8..16
+        put_u64(&mut b, self.start_lsn.raw()); // 16..24
+        put_u32(&mut b, self.payload.len() as u32); // 24..28
+        b.extend_from_slice(&self.payload);
+        b
+    }
+
+    /// Read the payload length out of a 28-byte response header.
+    pub fn payload_len(header: &[u8]) -> Result<usize> {
+        if header.len() < READ_RESPONSE_HEADER_LEN {
+            return Err(Error::parse("read response header too short"));
+        }
+        if get_u32(header, 0) != MAGIC || header[4] != VERSION {
+            return Err(Error::parse("bad WAL read response header"));
+        }
+        Ok(get_u32(header, 24) as usize)
+    }
+
+    /// Decode a complete response buffer (header + payload).
+    pub fn decode(buf: &[u8]) -> Result<ReadResponse> {
+        let plen = Self::payload_len(buf)?;
+        if buf.len() < READ_RESPONSE_HEADER_LEN + plen {
+            return Err(Error::parse("read response payload truncated"));
+        }
+        Ok(ReadResponse {
+            status: buf[5],
+            commit_lsn: Lsn(get_u64(buf, 8)),
+            start_lsn: Lsn(get_u64(buf, 16)),
+            payload: buf[READ_RESPONSE_HEADER_LEN..READ_RESPONSE_HEADER_LEN + plen].to_vec(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,5 +347,54 @@ mod tests {
         bytes[0] ^= 0xFF;
         assert!(AppendRequest::decode(&bytes).is_err());
         assert!(AppendResponse::decode(&[0u8; 4]).is_err());
+    }
+
+    #[test]
+    fn read_request_round_trips() {
+        let req = ReadRequest {
+            tenant: TenantId::from_bytes([5; 16]),
+            timeline: TimelineId::from_bytes([6; 16]),
+            start_lsn: Lsn(0x4000),
+            max_bytes: 1 << 20,
+        };
+        let bytes = req.encode();
+        assert_eq!(bytes.len(), READ_REQUEST_LEN);
+        assert_eq!(message_type(&bytes).unwrap(), TYPE_READ);
+        assert_eq!(ReadRequest::decode(&bytes).unwrap(), req);
+    }
+
+    #[test]
+    fn read_response_round_trips() {
+        let resp = ReadResponse {
+            status: STATUS_OK,
+            commit_lsn: Lsn(0x9000),
+            start_lsn: Lsn(0x4000),
+            payload: b"committed-wal-chunk".to_vec(),
+        };
+        let bytes = resp.encode();
+        assert_eq!(bytes.len(), READ_RESPONSE_HEADER_LEN + resp.payload.len());
+        assert_eq!(ReadResponse::payload_len(&bytes).unwrap(), resp.payload.len());
+        assert_eq!(ReadResponse::decode(&bytes).unwrap(), resp);
+    }
+
+    #[test]
+    fn message_type_distinguishes_append_and_read() {
+        let append = AppendRequest {
+            tenant: TenantId::ZERO,
+            timeline: TimelineId::ZERO,
+            term: 1,
+            start_lsn: Lsn(0),
+            payload: b"x".to_vec(),
+        }
+        .encode();
+        let read = ReadRequest {
+            tenant: TenantId::ZERO,
+            timeline: TimelineId::ZERO,
+            start_lsn: Lsn(0),
+            max_bytes: 16,
+        }
+        .encode();
+        assert_eq!(message_type(&append).unwrap(), TYPE_APPEND);
+        assert_eq!(message_type(&read).unwrap(), TYPE_READ);
     }
 }

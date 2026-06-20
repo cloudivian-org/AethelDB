@@ -92,11 +92,22 @@ impl Repository {
         decoder.feed_bytes(wal);
         let mut n = 0;
         while let Some((lsn, record)) = decoder.poll_decode()? {
-            let decoded = decode_wal_record(lsn, &record)?;
-            self.ingest(modifications_from_record(&decoded, &record));
+            self.ingest_record(lsn, &record)?;
             n += 1;
         }
         Ok(n)
+    }
+
+    /// Decode one already-framed WAL record (its bytes start at `lsn`) and
+    /// ingest its per-page changes.
+    ///
+    /// This is the per-record seam used by the streaming WAL receiver, which
+    /// owns the [`WalStreamDecoder`] across network reads; [`ingest_wal`] is the
+    /// one-shot convenience that frames a whole buffer itself.
+    pub fn ingest_record(&self, lsn: Lsn, record: &[u8]) -> Result<(), WalDecodeError> {
+        let decoded = decode_wal_record(lsn, record)?;
+        self.ingest(modifications_from_record(&decoded, record));
+        Ok(())
     }
 
     /// Ingest a batch of page modifications (as a WAL decoder would emit).
