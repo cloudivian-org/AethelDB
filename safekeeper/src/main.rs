@@ -55,6 +55,10 @@ struct Args {
     /// In-memory ring cache capacity in bytes.
     #[arg(long, env = "SP_SK_RING_BYTES", default_value_t = 8 * 1024 * 1024)]
     ring_bytes: usize,
+
+    /// Address for the Prometheus `/metrics` endpoint.
+    #[arg(long, env = "SP_SK_METRICS_LISTEN", default_value = "0.0.0.0:9500")]
+    metrics_listen: std::net::SocketAddr,
 }
 
 #[tokio::main]
@@ -103,6 +107,13 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let sk = Safekeeper::new(storage, consensus, replicator);
+
+    // Prometheus metrics endpoint.
+    let metrics_listener = TcpListener::bind(args.metrics_listen)
+        .await
+        .with_context(|| format!("failed to bind metrics {}", args.metrics_listen))?;
+    tokio::spawn(common::metrics::serve_metrics(metrics_listener));
+    info!(addr = %args.metrics_listen, "serving Prometheus metrics");
 
     let listener = TcpListener::bind(args.listen)
         .await

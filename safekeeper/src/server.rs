@@ -75,6 +75,9 @@ impl Safekeeper {
             c.node_id()
         };
 
+        crate::metrics::APPENDS.inc();
+        crate::metrics::WAL_BYTES.inc_by(req.payload.len() as u64);
+
         // Durably append + flush. (No await while the storage lock is held.)
         let flush_lsn = {
             let mut s = self.storage.lock().unwrap();
@@ -101,6 +104,7 @@ impl Safekeeper {
             (c.term(), c.commit_lsn())
         };
 
+        crate::metrics::COMMIT_LSN.set(commit_lsn.raw() as i64);
         debug!(%flush_lsn, %commit_lsn, peers = acks.len(), "append committed");
         Ok(AppendResponse { status: STATUS_OK, term, flush_lsn, commit_lsn })
     }
@@ -133,6 +137,7 @@ impl Safekeeper {
             c.record_flush(node_id, flush_lsn);
             c.commit_lsn()
         };
+        crate::metrics::REPLICATED.inc();
         debug!(%flush_lsn, "replicated WAL run from leader");
         Ok(AppendResponse { status: STATUS_OK, term, flush_lsn, commit_lsn })
     }
@@ -168,6 +173,9 @@ impl Safekeeper {
             let granted = c.handle_vote_request(req.term, req.candidate);
             (granted, c.term())
         };
+        if granted {
+            crate::metrics::VOTES_GRANTED.inc();
+        }
         let flush_lsn = self.storage.lock().unwrap().flush_lsn();
         debug!(term = req.term, candidate = req.candidate, granted, "handled vote request");
         VoteResponse { granted, term, flush_lsn }

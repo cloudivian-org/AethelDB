@@ -34,6 +34,8 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 clap = { workspace = true }
 async-trait = { workspace = true }
+prometheus = { version = "0.13", default-features = false }
+once_cell = "1"
 # Real S3-compatible object store (MinIO / AWS S3) behind the ObjectStore trait.
 object_store = { version = "0.11", features = ["aws"] }
 futures = "0.3"

@@ -121,6 +121,7 @@ impl Repository {
     pub fn ingest_record(&self, lsn: Lsn, record: &[u8]) -> Result<(), WalDecodeError> {
         let decoded = decode_wal_record(lsn, record)?;
         self.ingest(modifications_from_record(&decoded, record));
+        crate::metrics::WAL_RECORDS.inc();
         Ok(())
     }
 
@@ -303,6 +304,7 @@ impl Repository {
             inner.uploaded.remove(oid);
         }
         let layers_after = inner.layers.len();
+        crate::metrics::GC_VERSIONS_REMOVED.inc_by(versions_removed as u64);
         debug!(layers_before, layers_after, versions_removed, %gc_horizon, "compacted layers");
         CompactionStats { layers_before, layers_after, versions_removed, removed_layer_ids }
     }

@@ -13,3 +13,8 @@ description = "Shared wire types (LSN, tenant/timeline IDs, page keys) for Aethe
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+# Operational metrics: a shared Prometheus registry + a tiny /metrics server.
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+prometheus = { version = "0.13", default-features = false }

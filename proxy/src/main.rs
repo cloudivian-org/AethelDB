@@ -54,6 +54,10 @@ struct Args {
     #[arg(long, env = "SP_PROXY_REAP_TICK_SECS", default_value_t = 10)]
     reap_tick_secs: u64,
 
+    /// Address for the Prometheus `/metrics` endpoint.
+    #[arg(long, env = "SP_PROXY_METRICS_LISTEN", default_value = "0.0.0.0:9432")]
+    metrics_listen: SocketAddr,
+
     /// PEM certificate-chain file for TLS termination. Set with --tls-key to
     /// accept TLS (`SSLRequest`) from clients; omit for plaintext only.
     #[arg(long, env = "SP_PROXY_TLS_CERT", requires = "tls_key")]
@@ -123,6 +127,13 @@ async fn main() -> anyhow::Result<()> {
         tick: Duration::from_secs(args.reap_tick_secs),
     };
     tokio::spawn(idle::run(proxy.clone(), reaper_cfg));
+
+    // Prometheus metrics endpoint.
+    let metrics_listener = TcpListener::bind(args.metrics_listen)
+        .await
+        .with_context(|| format!("failed to bind metrics {}", args.metrics_listen))?;
+    tokio::spawn(common::metrics::serve_metrics(metrics_listener));
+    info!(addr = %args.metrics_listen, "serving Prometheus metrics");
 
     // Bind and serve.
     let listener = TcpListener::bind(args.listen)
