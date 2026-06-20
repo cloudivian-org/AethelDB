@@ -14,13 +14,15 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::Parser;
+use common::{Lsn, TenantId, TimelineId};
 use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{info, warn};
 
 use pageserver::objstore::{LocalObjectStore, ObjectStore};
 use pageserver::offload;
 use pageserver::repository::Repository;
 use pageserver::server::{serve_ingest, serve_pages};
+use pageserver::walreceiver::{WalReceiver, WalReceiverConfig};
 
 /// Command-line / environment configuration for the page server.
 #[derive(Debug, Parser)]
@@ -33,6 +35,16 @@ struct Args {
     /// Address to accept WAL modifications (from the WAL decoder) on.
     #[arg(long, env = "SP_PS_INGEST_LISTEN", default_value = "0.0.0.0:6401")]
     ingest_listen: SocketAddr,
+
+    /// Optional safekeeper address to stream committed WAL from. When set, the
+    /// page server pulls and decodes WAL itself (Phase 4) instead of only
+    /// accepting pushed `Modification`s on the ingest endpoint.
+    #[arg(long, env = "SP_PS_SAFEKEEPER")]
+    safekeeper: Option<SocketAddr>,
+
+    /// LSN to begin streaming WAL from (used with `--safekeeper`).
+    #[arg(long, env = "SP_PS_WAL_START_LSN", default_value_t = 0)]
+    wal_start_lsn: u64,
 
     /// Local directory used as the (mock MinIO/S3) object store for layers.
     #[arg(long, env = "SP_PS_OBJECT_DIR", default_value = ".data/pageserver/objstore")]
@@ -74,6 +86,24 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("failed to bind ingest {}", args.ingest_listen))?;
     tokio::spawn(serve_ingest(repo.clone(), ingest_listener));
     info!(addr = %args.ingest_listen, "accepting WAL modifications");
+
+    // Optional: pull committed WAL directly from a safekeeper (Phase 4). Single
+    // tenant/timeline for now; multi-tenant routing comes with the control plane.
+    if let Some(sk_addr) = args.safekeeper {
+        let cfg = WalReceiverConfig::new(sk_addr, TenantId::ZERO, TimelineId::ZERO, Lsn(args.wal_start_lsn));
+        let repo_for_wal = repo.clone();
+        tokio::spawn(async move {
+            match WalReceiver::connect(repo_for_wal, cfg).await {
+                Ok(receiver) => {
+                    if let Err(e) = receiver.run().await {
+                        warn!(error = %format!("{e:#}"), "WAL receiver stopped");
+                    }
+                }
+                Err(e) => warn!(error = %format!("{e:#}"), "WAL receiver failed to connect"),
+            }
+        });
+        info!(safekeeper = %sk_addr, start_lsn = args.wal_start_lsn, "streaming committed WAL from safekeeper");
+    }
 
     // Page-service endpoint (runs on the main task).
     let page_listener = TcpListener::bind(args.listen)

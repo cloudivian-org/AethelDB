@@ -17,7 +17,10 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
-use common::wal_service::{AppendRequest, AppendResponse, REQUEST_HEADER_LEN, STATUS_OK, STATUS_STALE_TERM};
+use common::wal_service::{
+    message_type, AppendRequest, AppendResponse, ReadRequest, ReadResponse, PREFIX_LEN,
+    READ_REQUEST_LEN, REQUEST_HEADER_LEN, STATUS_OK, STATUS_STALE_TERM, TYPE_APPEND, TYPE_READ,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, info, warn};
@@ -99,32 +102,90 @@ impl Safekeeper {
         Ok(AppendResponse { status: STATUS_OK, term, flush_lsn, commit_lsn })
     }
 
-    /// Serve one ingest connection: read framed appends, reply to each.
+    /// Serve a read request: return committed WAL from the requested cursor.
+    ///
+    /// Answers with `[from, commit_lsn)` capped at `max_bytes`, where `from` is
+    /// the request's `start_lsn` clamped up to the retained floor. An empty
+    /// payload means the reader is already caught up to the commit position.
+    pub fn handle_read(&self, req: &ReadRequest) -> anyhow::Result<ReadResponse> {
+        let commit_lsn = self.consensus.lock().unwrap().commit_lsn();
+        let storage = self.storage.lock().unwrap();
+        let from = req.start_lsn.max(storage.start_lsn());
+
+        let available = commit_lsn
+            .raw()
+            .saturating_sub(from.raw())
+            .min(req.max_bytes as u64) as usize;
+
+        let mut payload = vec![0u8; available];
+        if available > 0 {
+            storage.read_at(from, &mut payload).context("reading committed WAL")?;
+        }
+        Ok(ReadResponse { status: STATUS_OK, commit_lsn, start_lsn: from, payload })
+    }
+
+    /// Serve one connection: dispatch framed appends and reads until EOF.
     pub async fn serve_connection(self: &Arc<Self>, mut stream: TcpStream) -> anyhow::Result<()> {
-        let mut header = [0u8; REQUEST_HEADER_LEN];
+        let mut prefix = [0u8; PREFIX_LEN];
         loop {
-            // Read the fixed header (clean EOF between messages ends the stream).
-            match stream.read_exact(&mut header).await {
+            // Read the common prefix (clean EOF between messages ends the stream).
+            match stream.read_exact(&mut prefix).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
-                Err(e) => return Err(e).context("reading append header"),
+                Err(e) => return Err(e).context("reading message prefix"),
             }
-            let plen = AppendRequest::payload_len(&header).context("parsing append header")?;
-
-            // Read the payload and assemble the full message.
-            let mut full = Vec::with_capacity(REQUEST_HEADER_LEN + plen);
-            full.extend_from_slice(&header);
-            full.resize(REQUEST_HEADER_LEN + plen, 0);
-            stream
-                .read_exact(&mut full[REQUEST_HEADER_LEN..])
-                .await
-                .context("reading append payload")?;
-
-            let req = AppendRequest::decode(&full).context("decoding append request")?;
-            let resp = self.handle_append(&req).await?;
-            stream.write_all(&resp.encode()).await.context("writing append response")?;
+            match message_type(&prefix).context("parsing message prefix")? {
+                TYPE_APPEND => self.serve_append(&mut stream, &prefix).await?,
+                TYPE_READ => self.serve_read(&mut stream, &prefix).await?,
+                other => anyhow::bail!("unknown WAL message type {other}"),
+            }
             stream.flush().await.ok();
         }
+    }
+
+    /// Read the rest of an append message, handle it, and reply.
+    async fn serve_append(
+        self: &Arc<Self>,
+        stream: &mut TcpStream,
+        prefix: &[u8; PREFIX_LEN],
+    ) -> anyhow::Result<()> {
+        // Assemble the full fixed header (prefix + remainder), then the payload.
+        let mut full = vec![0u8; REQUEST_HEADER_LEN];
+        full[..PREFIX_LEN].copy_from_slice(prefix);
+        stream
+            .read_exact(&mut full[PREFIX_LEN..])
+            .await
+            .context("reading append header")?;
+        let plen = AppendRequest::payload_len(&full).context("parsing append header")?;
+        full.resize(REQUEST_HEADER_LEN + plen, 0);
+        stream
+            .read_exact(&mut full[REQUEST_HEADER_LEN..])
+            .await
+            .context("reading append payload")?;
+
+        let req = AppendRequest::decode(&full).context("decoding append request")?;
+        let resp = self.handle_append(&req).await?;
+        stream.write_all(&resp.encode()).await.context("writing append response")?;
+        Ok(())
+    }
+
+    /// Read the rest of a read request, handle it, and reply.
+    async fn serve_read(
+        self: &Arc<Self>,
+        stream: &mut TcpStream,
+        prefix: &[u8; PREFIX_LEN],
+    ) -> anyhow::Result<()> {
+        let mut full = vec![0u8; READ_REQUEST_LEN];
+        full[..PREFIX_LEN].copy_from_slice(prefix);
+        stream
+            .read_exact(&mut full[PREFIX_LEN..])
+            .await
+            .context("reading read request")?;
+
+        let req = ReadRequest::decode(&full).context("decoding read request")?;
+        let resp = self.handle_read(&req)?;
+        stream.write_all(&resp.encode()).await.context("writing read response")?;
+        Ok(())
     }
 }
 

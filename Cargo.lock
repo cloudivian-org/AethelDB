@@ -255,6 +255,7 @@ dependencies = [
  "bytes",
  "clap",
  "common",
+ "safekeeper",
  "thiserror",
  "tokio",
  "tracing",
