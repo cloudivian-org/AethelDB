@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Apply the whole stack with: kubectl apply -k deploy/k8s
+# Render without a cluster with: kubectl kustomize deploy/k8s
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aetheldb
+resources:
+  - namespace.yaml
+  - minio.yaml
+  - safekeeper.yaml
+  - pageserver.yaml
+  - proxy.yaml

@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Page server as a StatefulSet (durable local cache), streaming WAL from the
+# safekeeper and offloading layers to MinIO/S3. Exposes the page service, both
+# control endpoints, and metrics.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pageserver
+  labels: { app: pageserver }
+spec:
+  selector: { app: pageserver }
+  ports:
+    - { name: page, port: 6400, targetPort: 6400 }
+    - { name: ingest, port: 6401, targetPort: 6401 }
+    - { name: control, port: 6402, targetPort: 6402 }
+    - { name: http, port: 6403, targetPort: 6403 }
+    - { name: metrics, port: 9400, targetPort: 9400 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pageserver
+spec:
+  serviceName: pageserver
+  replicas: 1
+  selector:
+    matchLabels: { app: pageserver }
+  template:
+    metadata:
+      labels: { app: pageserver }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9400"
+    spec:
+      containers:
+        - name: pageserver
+          image: aetheldb/pageserver:dev # docker build --build-arg BIN=aethel-pageserver
+          args:
+            - "aethel-pageserver"
+            - "--listen"
+            - "0.0.0.0:6400"
+            - "--ingest-listen"
+            - "0.0.0.0:6401"
+            - "--control-listen"
+            - "0.0.0.0:6402"
+            - "--http-listen"
+            - "0.0.0.0:6403"
+            - "--metrics-listen"
+            - "0.0.0.0:9400"
+            - "--safekeeper"
+            - "safekeeper-0.safekeeper:6500"
+            - "--s3-endpoint"
+            - "http://minio:9000"
+            - "--s3-bucket"
+            - "aethel"
+          ports:
+            - { containerPort: 6400, name: page }
+            - { containerPort: 6401, name: ingest }
+            - { containerPort: 6402, name: control }
+            - { containerPort: 6403, name: http }
+            - { containerPort: 9400, name: metrics }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 6403 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          volumeMounts:
+            - { name: data, mountPath: /data }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 20Gi }

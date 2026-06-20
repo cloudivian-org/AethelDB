@@ -5,7 +5,7 @@
 
 CARGO ?= cargo
 
-.PHONY: help build check test fmt fmt-check clippy compute-image up down e2e clean
+.PHONY: help build check test fmt fmt-check clippy compute-image images up down e2e clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -31,6 +31,11 @@ clippy: ## Lint with clippy, denying warnings
 
 compute-image: ## Build the patchable PostgreSQL compute container image
 	docker build -t aetheldb/compute:dev ./compute
+
+images: ## Build the proxy/safekeeper/pageserver service images (for k8s)
+	docker build -t aetheldb/proxy:dev      --build-arg BIN=aethel-proxy      -f deploy/Dockerfile.rust .
+	docker build -t aetheldb/safekeeper:dev --build-arg BIN=aethel-safekeeper -f deploy/Dockerfile.rust .
+	docker build -t aetheldb/pageserver:dev --build-arg BIN=aethel-pageserver -f deploy/Dockerfile.rust .
 
 up: ## Start the local stack (safekeeper, pageserver, object store) via compose
 	docker compose up --build -d
