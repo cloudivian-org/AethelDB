@@ -58,9 +58,6 @@ break a branch's inherited reads.
 
 ## Next
 
-- **Object-store deletion** — delete the layer files named in
-  `removed_layer_ids` from S3 after a successful compaction (today they are
-  orphaned; correctness is unaffected, but space leaks).
 - **Automatic policy** — a background worker that derives the horizon from a
   retention window and triggers compaction by layer count / size, rather than
   the explicit `gc` control command.

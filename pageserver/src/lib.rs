@@ -36,7 +36,7 @@ pub mod walredo_process;
 pub mod walredo_proto;
 
 pub use layer::{Layer, LayerId};
-pub use objstore::{LocalObjectStore, ObjectStore};
+pub use objstore::{LocalObjectStore, ObjectStore, S3ObjectStore};
 pub use page::{ByteEdit, Modification, PageVersion, WalRecord};
 pub use control::serve_control;
 pub use repository::{PageLookup, Repository};
