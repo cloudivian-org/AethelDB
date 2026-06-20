@@ -20,6 +20,7 @@
 //! * [`walreceiver`] — streams committed WAL from a safekeeper into the store
 //!   (Phase 4), closing the safekeeper→page-server link.
 
+pub mod control;
 pub mod layer;
 pub mod objstore;
 pub mod offload;
@@ -37,6 +38,7 @@ pub mod walredo_proto;
 pub use layer::{Layer, LayerId};
 pub use objstore::{LocalObjectStore, ObjectStore};
 pub use page::{ByteEdit, Modification, PageVersion, WalRecord};
+pub use control::serve_control;
 pub use repository::{PageLookup, Repository};
 pub use server::{serve_ingest, serve_pages};
 pub use tenant::{Tenant, TenantError};

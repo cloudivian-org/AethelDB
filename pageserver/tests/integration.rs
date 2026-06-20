@@ -14,8 +14,8 @@ use std::time::Duration;
 use common::page_service::{Request, Response};
 use common::{ForkNumber, Lsn, RelTag, TenantId, TimelineId, PAGE_SIZE};
 use pageserver::page::{ByteEdit, Modification, PageVersion};
-use pageserver::repository::Repository;
 use pageserver::server::{serve_ingest, serve_pages};
+use pageserver::tenant::Tenant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -59,19 +59,20 @@ async fn request(stream: &mut TcpStream, req: &Request) -> Response {
 
 #[tokio::test]
 async fn ingest_then_getpage_reconstructs_history() {
-    let repo = Repository::new(100_000);
+    let tenant = Tenant::new(100_000);
+    let root = tenant.create_timeline(TimelineId::ZERO).unwrap();
 
     let ingest_addr = {
-        let repo = repo.clone();
+        let root = root.clone();
         spawn(move |l| async move {
-            let _ = serve_ingest(repo, l).await;
+            let _ = serve_ingest(root, l).await;
         })
         .await
     };
     let page_addr = {
-        let repo = repo.clone();
+        let tenant = tenant.clone();
         spawn(move |l| async move {
-            let _ = serve_pages(repo, l).await;
+            let _ = serve_pages(tenant, l).await;
         })
         .await
     };

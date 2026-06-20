@@ -18,10 +18,11 @@ use common::{Lsn, TenantId, TimelineId};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 
+use pageserver::control::serve_control;
 use pageserver::objstore::{LocalObjectStore, ObjectStore};
 use pageserver::offload;
-use pageserver::repository::Repository;
 use pageserver::server::{serve_ingest, serve_pages};
+use pageserver::tenant::Tenant;
 use pageserver::walreceiver::{WalReceiver, WalReceiverConfig};
 
 /// Command-line / environment configuration for the page server.
@@ -57,6 +58,10 @@ struct Args {
     /// How often the offload worker scans for layers to upload, in seconds.
     #[arg(long, env = "SP_PS_OFFLOAD_TICK_SECS", default_value_t = 10)]
     offload_tick_secs: u64,
+
+    /// Address for the branch-management control endpoint.
+    #[arg(long, env = "SP_PS_CONTROL_LISTEN", default_value = "0.0.0.0:6402")]
+    control_listen: SocketAddr,
 }
 
 #[tokio::main]
@@ -64,36 +69,50 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
     let args = Args::parse();
 
-    let repo = Repository::new(args.freeze_threshold);
     let store: Arc<dyn ObjectStore> = Arc::new(
         LocalObjectStore::new(&args.object_dir)
             .with_context(|| format!("opening object store at {}", args.object_dir.display()))?,
     );
 
+    // One tenant with a root timeline (`TimelineId::ZERO`); branches are created
+    // at runtime via the control endpoint.
+    let tenant = Tenant::new(args.freeze_threshold);
+    let root = tenant
+        .create_timeline(TimelineId::ZERO)
+        .context("creating root timeline")?;
+
     info!(
         listen = %args.listen,
         ingest = %args.ingest_listen,
+        control = %args.control_listen,
         object_dir = %args.object_dir.display(),
         "starting aethel-pageserver"
     );
 
-    // Background layer offload.
-    tokio::spawn(offload::run(repo.clone(), store.clone(), Duration::from_secs(args.offload_tick_secs)));
+    // Background layer offload (across every timeline of the tenant).
+    tokio::spawn(offload::run(tenant.clone(), store.clone(), Duration::from_secs(args.offload_tick_secs)));
 
-    // Ingest endpoint.
+    // Ingest endpoint (legacy push path) targets the root timeline.
     let ingest_listener = TcpListener::bind(args.ingest_listen)
         .await
         .with_context(|| format!("failed to bind ingest {}", args.ingest_listen))?;
-    tokio::spawn(serve_ingest(repo.clone(), ingest_listener));
+    tokio::spawn(serve_ingest(root.clone(), ingest_listener));
     info!(addr = %args.ingest_listen, "accepting WAL modifications");
 
-    // Optional: pull committed WAL directly from a safekeeper (Phase 4). Single
-    // tenant/timeline for now; multi-tenant routing comes with the control plane.
+    // Branch-management control endpoint.
+    let control_listener = TcpListener::bind(args.control_listen)
+        .await
+        .with_context(|| format!("failed to bind control {}", args.control_listen))?;
+    tokio::spawn(serve_control(tenant.clone(), control_listener));
+    info!(addr = %args.control_listen, "branch control endpoint ready");
+
+    // Optional: pull committed WAL directly from a safekeeper (Phase 4) into the
+    // root timeline. Per-branch receivers will follow with the control plane.
     if let Some(sk_addr) = args.safekeeper {
         let cfg = WalReceiverConfig::new(sk_addr, TenantId::ZERO, TimelineId::ZERO, Lsn(args.wal_start_lsn));
-        let repo_for_wal = repo.clone();
+        let timeline_for_wal = root.clone();
         tokio::spawn(async move {
-            match WalReceiver::connect(repo_for_wal, cfg).await {
+            match WalReceiver::connect(timeline_for_wal, cfg).await {
                 Ok(receiver) => {
                     if let Err(e) = receiver.run().await {
                         warn!(error = %format!("{e:#}"), "WAL receiver stopped");
@@ -110,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to bind {}", args.listen))?;
     info!(addr = %args.listen, "ready to serve pages");
-    serve_pages(repo, page_listener).await
+    serve_pages(tenant, page_listener).await
 }
 
 /// Configure structured logging. Honors `RUST_LOG`, defaulting to `info`.
