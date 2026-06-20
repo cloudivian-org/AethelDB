@@ -77,6 +77,10 @@ struct Args {
     #[arg(long, env = "SP_PS_OFFLOAD_TICK_SECS", default_value_t = 10)]
     offload_tick_secs: u64,
 
+    /// Address for the Prometheus `/metrics` endpoint.
+    #[arg(long, env = "SP_PS_METRICS_LISTEN", default_value = "0.0.0.0:9400")]
+    metrics_listen: SocketAddr,
+
     /// Address for the branch-management control endpoint.
     #[arg(long, env = "SP_PS_CONTROL_LISTEN", default_value = "0.0.0.0:6402")]
     control_listen: SocketAddr,
@@ -121,6 +125,13 @@ async fn main() -> anyhow::Result<()> {
         object_dir = %args.object_dir.display(),
         "starting aethel-pageserver"
     );
+
+    // Prometheus metrics endpoint.
+    let metrics_listener = TcpListener::bind(args.metrics_listen)
+        .await
+        .with_context(|| format!("failed to bind metrics {}", args.metrics_listen))?;
+    tokio::spawn(common::metrics::serve_metrics(metrics_listener));
+    info!(addr = %args.metrics_listen, "serving Prometheus metrics");
 
     // Background layer offload (across every timeline of the tenant).
     tokio::spawn(offload::run(tenant.clone(), store.clone(), Duration::from_secs(args.offload_tick_secs)));

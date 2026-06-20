@@ -40,6 +40,7 @@ pub async fn offload_pending(repo: &Arc<Repository>, store: &Arc<dyn ObjectStore
             Ok(()) => {
                 repo.mark_uploaded(layer.id());
                 uploaded += 1;
+                crate::metrics::LAYERS_OFFLOADED.inc();
                 info!(layer_id = layer.id(), %key, versions = layer.len(), "offloaded layer");
             }
             Err(err) => warn!(layer_id = layer.id(), error = %format!("{err:#}"), "offload failed"),

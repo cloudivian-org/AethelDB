@@ -103,6 +103,7 @@ async fn handle_page_conn(tenant: Arc<Tenant>, mut socket: TcpStream) -> anyhow:
             None => Response::Error(format!("unknown timeline {timeline_id}")),
             Some(timeline) => match req {
                 Request::GetPage { rel, block, lsn, .. } => {
+                    crate::metrics::GET_PAGE.inc();
                     match timeline.get_page(PageKey { rel, block }, lsn) {
                         Ok(PageLookup::Page(page)) => Response::Page(page),
                         Ok(PageLookup::NotFound) => Response::NotFound,

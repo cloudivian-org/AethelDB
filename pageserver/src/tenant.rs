@@ -63,6 +63,7 @@ impl Tenant {
         }
         let tl = Timeline::root(id, self.new_repo());
         timelines.insert(id, tl.clone());
+        crate::metrics::TIMELINES.set(timelines.len() as i64);
         Ok(tl)
     }
 
@@ -83,6 +84,7 @@ impl Tenant {
         let parent = timelines.get(&parent_id).cloned().ok_or(TenantError::NoSuchParent(parent_id))?;
         let tl = Timeline::branched(new_id, self.new_repo(), parent, ancestor_lsn);
         timelines.insert(new_id, tl.clone());
+        crate::metrics::TIMELINES.set(timelines.len() as i64);
         Ok(tl)
     }
 

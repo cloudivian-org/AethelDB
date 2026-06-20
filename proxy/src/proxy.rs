@@ -183,6 +183,7 @@ impl Proxy {
         // bad credential here avoids a cold start (scale-to-zero protection). ---
         if let Some(secret) = state.scram() {
             if let Err(err) = crate::scram::authenticate(&mut client, secret).await {
+                crate::metrics::AUTH_FAILURES.inc();
                 info!(%peer, tenant = %tenant_name, error = %err, "SCRAM authentication failed");
                 self.reject(&mut client, "28P01", "password authentication failed").await;
                 return Ok(());
@@ -220,6 +221,7 @@ impl Proxy {
     async fn ensure_awake(self: &Arc<Self>, tenant: &str, state: &TenantState) -> anyhow::Result<()> {
         if !state.is_running() {
             info!(tenant, "cold start: triggering activator");
+            crate::metrics::WAKES.inc();
             self.activator
                 .start(tenant)
                 .await
@@ -265,6 +267,7 @@ pub async fn serve(proxy: Arc<Proxy>, listener: TcpListener) -> anyhow::Result<(
         // Disable Nagle: this is an interactive request/response path where
         // latency matters more than packing bytes.
         let _ = socket.set_nodelay(true);
+        crate::metrics::CONNECTIONS.inc();
 
         let proxy = proxy.clone();
         tokio::spawn(async move { proxy.handle_connection(socket, peer).await });
@@ -306,6 +309,7 @@ struct ConnGuard {
 impl ConnGuard {
     fn new(state: Arc<TenantState>) -> Self {
         state.connection_started();
+        crate::metrics::ACTIVE_CONNECTIONS.inc();
         ConnGuard { state }
     }
 }
@@ -313,5 +317,6 @@ impl ConnGuard {
 impl Drop for ConnGuard {
     fn drop(&mut self) {
         self.state.connection_finished();
+        crate::metrics::ACTIVE_CONNECTIONS.dec();
     }
 }

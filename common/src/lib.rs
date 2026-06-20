@@ -19,6 +19,7 @@
 pub mod error;
 pub mod ids;
 pub mod lsn;
+pub mod metrics;
 pub mod page;
 pub mod page_service;
 pub mod wal_service;

@@ -22,6 +22,7 @@
 
 pub mod control;
 pub mod layer;
+pub mod metrics;
 pub mod objstore;
 pub mod offload;
 pub mod page;

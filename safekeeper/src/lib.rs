@@ -11,6 +11,7 @@
 //! * [`server`] — the ingest handler and accept loop.
 
 pub mod consensus;
+pub mod metrics;
 pub mod replicator;
 pub mod server;
 pub mod storage;

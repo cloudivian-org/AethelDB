@@ -14,6 +14,7 @@
 
 pub mod activator;
 pub mod idle;
+pub mod metrics;
 pub mod protocol;
 pub mod proxy;
 pub mod scram;
