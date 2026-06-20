@@ -14,9 +14,10 @@
 //! Replies are `ok …` or `err …`. This is the seam a real control plane (or a
 //! `aethelctl` CLI) drives; it is intentionally tiny and human-typable.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use common::{Lsn, TimelineId};
+use common::{Lsn, TenantId, TimelineId};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, warn};
@@ -24,6 +25,7 @@ use tracing::{debug, warn};
 use crate::objstore::ObjectStore;
 use crate::offload::layer_key;
 use crate::tenant::Tenant;
+use crate::walreceiver::{WalReceiver, WalReceiverConfig};
 
 /// Serve the control endpoint: branch-management commands. When `store` is set,
 /// `gc` also deletes the compacted-away layer objects from it.
@@ -58,12 +60,12 @@ async fn handle_conn(
     let (read_half, mut write_half) = socket.into_split();
     let mut lines = BufReader::new(read_half).lines();
     while let Some(line) = lines.next_line().await? {
-        // `gc` is handled here (it is async and may delete object-store files);
-        // the rest are pure and handled by `exec`.
-        let reply = if line.split_whitespace().next() == Some("gc") {
-            gc_command(&tenant, store.as_ref(), &line).await
-        } else {
-            exec(&tenant, &line)
+        // `gc` and `receive` are async (object-store deletes / spawning a
+        // receiver); the rest are pure and handled by `exec`.
+        let reply = match line.split_whitespace().next() {
+            Some("gc") => gc_command(&tenant, store.as_ref(), &line).await,
+            Some("receive") => receive_command(&tenant, &line).await,
+            _ => exec(&tenant, &line),
         };
         debug!(%line, %reply, "control command");
         write_half.write_all(reply.as_bytes()).await?;
@@ -97,6 +99,37 @@ async fn gc_command(tenant: &Arc<Tenant>, store: Option<&Arc<dyn ObjectStore>>, 
         "ok gc @ {horizon}: {} timelines, {versions} versions removed, {objects_deleted} objects deleted",
         stats.len()
     )
+}
+
+/// Attach a WAL receiver to a timeline, streaming committed WAL from a
+/// safekeeper into that branch. This is what makes a branch ingestible over the
+/// network (each timeline can stream from its own safekeeper position).
+async fn receive_command(tenant: &Arc<Tenant>, line: &str) -> String {
+    let mut parts = line.split_whitespace();
+    parts.next(); // "receive"
+    let timeline = parts.next().and_then(|s| s.parse::<TimelineId>().ok());
+    let addr = parts.next().and_then(|s| s.parse::<SocketAddr>().ok());
+    let start_lsn = parts.next().and_then(|s| s.parse::<u64>().ok());
+    let (timeline, addr, start_lsn) = match (timeline, addr, start_lsn) {
+        (Some(t), Some(a), Some(l)) => (t, a, l),
+        _ => return "err usage: receive <timeline-hex> <safekeeper-host:port> <start-lsn>".to_string(),
+    };
+
+    let Some(tl) = tenant.get_timeline(timeline) else {
+        return format!("err unknown timeline {timeline}");
+    };
+    let cfg = WalReceiverConfig::new(addr, TenantId::ZERO, timeline, Lsn(start_lsn));
+    match WalReceiver::connect(tl, cfg).await {
+        Ok(receiver) => {
+            tokio::spawn(async move {
+                if let Err(e) = receiver.run().await {
+                    warn!(error = %format!("{e:#}"), "per-branch WAL receiver stopped");
+                }
+            });
+            format!("ok receiving {timeline} from {addr} @ {start_lsn}")
+        }
+        Err(e) => format!("err connecting to safekeeper: {e:#}"),
+    }
 }
 
 /// Execute one command line against the tenant, returning the reply line.
