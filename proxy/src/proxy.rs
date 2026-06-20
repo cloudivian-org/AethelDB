@@ -179,6 +179,17 @@ impl Proxy {
             return Ok(());
         };
 
+        // --- 2b. Authenticate before waking compute, if configured. Rejecting a
+        // bad credential here avoids a cold start (scale-to-zero protection). ---
+        if let Some(secret) = state.scram() {
+            if let Err(err) = crate::scram::authenticate(&mut client, secret).await {
+                info!(%peer, tenant = %tenant_name, error = %err, "SCRAM authentication failed");
+                self.reject(&mut client, "28P01", "password authentication failed").await;
+                return Ok(());
+            }
+            debug!(%peer, tenant = %tenant_name, "client authenticated via SCRAM");
+        }
+
         // --- 3. Ensure compute is awake, holding this socket open meanwhile. ---
         self.ensure_awake(&tenant_name, &state).await?;
 
