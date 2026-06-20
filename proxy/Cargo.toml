@@ -41,6 +41,16 @@ sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
 rand = "0.8"
+# Kubernetes-native activator (opt-in via the `kubernetes` feature): scales a
+# per-tenant compute Deployment. Heavy deps, so off by default.
+kube = { version = "0.96", default-features = false, features = ["client", "config", "rustls-tls"], optional = true }
+k8s-openapi = { version = "0.23", features = ["latest"], optional = true }
+serde_json = { version = "1", optional = true }
+http = { version = "1", optional = true }
+
+[features]
+# Build the Kubernetes activator into aethel-proxy.
+kubernetes = ["dep:kube", "dep:k8s-openapi", "dep:serde_json", "dep:http"]
 
 [dev-dependencies]
 # The integration tests drive the proxy over real sockets.

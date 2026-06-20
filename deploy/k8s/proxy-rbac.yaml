@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# RBAC for the Kubernetes activator: the proxy needs to read and scale the
+# per-tenant compute Deployments in its namespace. Bind this ServiceAccount to
+# the proxy Pod (set `serviceAccountName: aethel-proxy` on the Deployment) and
+# run the proxy image built with `--features kubernetes`.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aethel-proxy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aethel-proxy-activator
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aethel-proxy-activator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aethel-proxy-activator
+subjects:
+  - kind: ServiceAccount
+    name: aethel-proxy

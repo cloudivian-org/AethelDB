@@ -71,6 +71,8 @@ Every pod is annotated `prometheus.io/scrape: "true"` with its metrics port.
   (`--s3-endpoint`/`--s3-bucket`/keys) and store credentials in a `Secret`.
 - **TLS & auth** — give the proxy a cert (`--tls-cert`/`--tls-key`) and
   per-tenant SCRAM verifiers.
-- **Compute orchestration** — the proxy's activator runs shell/Docker commands
-  today; a Kubernetes-native activator (managing compute Pods/Jobs per tenant)
-  is the next operational step.
+- **Compute orchestration** — build the proxy with `--features kubernetes` and
+  set `--kube-namespace` to use the **Kubernetes activator**, which scales a
+  per-tenant `compute-<tenant>` Deployment to zero/one (RBAC in
+  `proxy-rbac.yaml`). See [`docs/design/k8s-activator.md`](../docs/design/k8s-activator.md);
+  verify against a real cluster with `deploy/k8s/verify-activator.sh`.

@@ -183,10 +183,11 @@ copy-on-write, compaction + branch-aware GC, S3 offload, and Prometheus metrics.
 
 **Next — the operational layer** (production hosting, not core architecture):
 
-- **Orchestration** — Kubernetes / Firecracker for real compute lifecycle (the
-  activator runs shell/Docker commands today).
 - **Control plane & multi-tenancy** — a tenant/project catalog and provisioning
-  API beyond the single-tenant model.
+  API beyond the single-tenant model. (The page server already exposes an
+  HTTP/JSON control API; compute orchestration is handled by the **Kubernetes
+  activator** — `proxy --features kubernetes`, see
+  [`docs/design/k8s-activator.md`](docs/design/k8s-activator.md).)
 - **Tracing exporters**, dashboards, and alerting on top of the metrics.
 - **Pooling** — composed via PgBouncer rather than reimplemented (see
   [`docs/design/proxy-tls.md`](docs/design/proxy-tls.md)).
