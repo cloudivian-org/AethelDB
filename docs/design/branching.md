@@ -5,10 +5,13 @@ Copyright 2026 The AethelDB Authors
 
 # Design: branching & point-in-time
 
-Status: **core complete (library)** — `Tenant` + `Timeline` with copy-on-write
-reconstruction across the ancestor chain (`pageserver/src/{tenant,timeline}.rs`,
-9 unit tests). Binary wiring (route the page-service / ingest / WAL-receiver by
-timeline, plus a branch-creation control endpoint) is the next step.
+Status: **complete & wired** — `Tenant` + `Timeline` with copy-on-write
+reconstruction across the ancestor chain (`pageserver/src/{tenant,timeline}.rs`),
+wired into the `aethel-pageserver` binary: the page service routes reads by the
+request's timeline, the offload worker covers every timeline, the WAL receiver
+targets a timeline, and a control endpoint (`pageserver/src/control.rs`) creates
+branches at runtime. An end-to-end test branches over real sockets and asserts
+isolation.
 
 ## Why
 
@@ -73,10 +76,21 @@ dev.ingest(/* writes diverge here */);
 dev.get_page(key, at_lsn)?;                              // CoW read
 ```
 
+## Control endpoint
+
+Branching is a control-plane action, so it gets a small line-oriented endpoint
+(`pageserver/src/control.rs`) rather than space on the hot path:
+
+```
+create <timeline-hex>                  -> ok created <id>
+branch <new-hex> <parent-hex> <lsn>    -> ok branched <new> from <parent> @ <lsn>
+list                                   -> ok <id> <id> ...
+```
+
 ## Next
 
-- **Binary wiring** — the page-service and ingest handlers route by the
-  `timeline` already present in the wire protocol; the WAL receiver targets a
-  `Timeline`; a small control endpoint creates branches.
+- **Per-branch network ingest** — today the WAL receiver and ingest endpoint
+  target the root timeline; a branch is written via its `Timeline` handle. A
+  per-branch receiver (one WAL stream per timeline) lands with the control plane.
 - **Retention / GC** — bound how far back PITR reaches, and keep a branch's
   `ancestor_lsn` pinned so its base history is never collected.

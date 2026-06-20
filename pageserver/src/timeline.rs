@@ -73,6 +73,11 @@ impl Timeline {
         self.ancestor.as_ref().map(|a| a.ancestor_lsn)
     }
 
+    /// This branch's own page store (used by the offload worker).
+    pub fn repository(&self) -> Arc<Repository> {
+        self.repo.clone()
+    }
+
     /// Ingest pre-decoded modifications into this branch's store.
     pub fn ingest<I: IntoIterator<Item = Modification>>(&self, mods: I) {
         self.repo.ingest(mods);

@@ -1,0 +1,132 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The AethelDB Authors
+
+//! A small control endpoint for branch management.
+//!
+//! Branching is a control-plane operation, not part of the hot page/WAL path, so
+//! it gets a simple line-oriented text protocol: one command per line, one
+//! reply line back. Commands:
+//!
+//! * `create <timeline-hex>` — create a fresh root timeline.
+//! * `branch <new-hex> <parent-hex> <lsn>` — branch `new` off `parent` at `lsn`.
+//! * `list` — list known timeline ids.
+//!
+//! Replies are `ok …` or `err …`. This is the seam a real control plane (or a
+//! `aethelctl` CLI) drives; it is intentionally tiny and human-typable.
+
+use std::sync::Arc;
+
+use common::{Lsn, TimelineId};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
+use tracing::{debug, warn};
+
+use crate::tenant::Tenant;
+
+/// Serve the control endpoint: branch-management commands.
+pub async fn serve_control(tenant: Arc<Tenant>, listener: TcpListener) -> anyhow::Result<()> {
+    loop {
+        let (socket, peer) = match listener.accept().await {
+            Ok(pair) => pair,
+            Err(err) => {
+                warn!(error = %err, "control accept failed; continuing");
+                continue;
+            }
+        };
+        let tenant = tenant.clone();
+        tokio::spawn(async move {
+            if let Err(err) = handle_conn(tenant, socket).await {
+                warn!(%peer, error = %format!("{err:#}"), "control connection error");
+            }
+        });
+    }
+}
+
+async fn handle_conn(tenant: Arc<Tenant>, socket: TcpStream) -> anyhow::Result<()> {
+    let (read_half, mut write_half) = socket.into_split();
+    let mut lines = BufReader::new(read_half).lines();
+    while let Some(line) = lines.next_line().await? {
+        let reply = exec(&tenant, &line);
+        debug!(%line, %reply, "control command");
+        write_half.write_all(reply.as_bytes()).await?;
+        write_half.write_all(b"\n").await?;
+        write_half.flush().await?;
+    }
+    Ok(())
+}
+
+/// Execute one command line against the tenant, returning the reply line.
+fn exec(tenant: &Arc<Tenant>, line: &str) -> String {
+    let mut parts = line.split_whitespace();
+    match parts.next() {
+        Some("create") => match parts.next().and_then(|s| s.parse::<TimelineId>().ok()) {
+            Some(id) => match tenant.create_timeline(id) {
+                Ok(_) => format!("ok created {id}"),
+                Err(e) => format!("err {e}"),
+            },
+            None => "err usage: create <timeline-hex>".to_string(),
+        },
+        Some("branch") => {
+            let new = parts.next().and_then(|s| s.parse::<TimelineId>().ok());
+            let parent = parts.next().and_then(|s| s.parse::<TimelineId>().ok());
+            let lsn = parts.next().and_then(|s| s.parse::<u64>().ok());
+            match (new, parent, lsn) {
+                (Some(n), Some(p), Some(l)) => match tenant.branch_timeline(n, p, Lsn(l)) {
+                    Ok(_) => format!("ok branched {n} from {p} @ {l}"),
+                    Err(e) => format!("err {e}"),
+                },
+                _ => "err usage: branch <new-hex> <parent-hex> <lsn>".to_string(),
+            }
+        }
+        Some("list") => {
+            let mut ids: Vec<String> = tenant.timeline_ids().iter().map(|i| i.to_string()).collect();
+            ids.sort();
+            format!("ok {}", ids.join(" "))
+        }
+        Some(other) => format!("err unknown command '{other}'"),
+        None => "err empty command".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(n: u8) -> TimelineId {
+        TimelineId::from_bytes([n; 16])
+    }
+
+    #[test]
+    fn create_branch_and_list() {
+        let tenant = Tenant::new(1_000);
+        let main = id(1).to_string();
+        let dev = id(2).to_string();
+
+        assert!(exec(&tenant, &format!("create {main}")).starts_with("ok created"));
+        // Re-creating the same timeline is an error.
+        assert!(exec(&tenant, &format!("create {main}")).starts_with("err"));
+
+        // Branch dev off main at LSN 100.
+        assert!(exec(&tenant, &format!("branch {dev} {main} 100")).starts_with("ok branched"));
+        // Branching off a missing parent fails.
+        assert!(exec(&tenant, &format!("branch {} {} 1", id(3), id(9))).starts_with("err"));
+
+        let listed = exec(&tenant, "list");
+        assert!(listed.contains(&main) && listed.contains(&dev));
+
+        // The branch really exists in the tenant.
+        let branch = tenant.get_timeline(id(2)).expect("branch created");
+        assert_eq!(branch.ancestor_timeline(), Some(id(1)));
+        assert_eq!(branch.ancestor_lsn(), Some(Lsn(100)));
+    }
+
+    #[test]
+    fn malformed_commands_are_rejected() {
+        let tenant = Tenant::new(1_000);
+        assert!(exec(&tenant, "create").starts_with("err usage"));
+        assert!(exec(&tenant, "branch only-one-arg").starts_with("err usage"));
+        assert!(exec(&tenant, "create not-hex").starts_with("err usage"));
+        assert!(exec(&tenant, "frobnicate").starts_with("err unknown"));
+        assert_eq!(exec(&tenant, ""), "err empty command");
+    }
+}

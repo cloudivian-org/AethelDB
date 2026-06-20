@@ -17,7 +17,7 @@ use std::time::Duration;
 use common::wal_service::{AppendRequest, AppendResponse, RESPONSE_LEN, STATUS_OK};
 use common::{ForkNumber, Lsn, PageKey, RelTag, TenantId, TimelineId};
 use pageserver::waldecode::{SIZE_OF_XLOG_LONG_PHD, XLOG_PAGE_MAGIC_PG16};
-use pageserver::{PageLookup, Repository, WalReceiver, WalReceiverConfig};
+use pageserver::{PageLookup, Tenant, WalReceiver, WalReceiverConfig};
 use safekeeper::consensus::Consensus;
 use safekeeper::replicator::LocalSimReplicator;
 use safekeeper::server::{serve, Safekeeper};
@@ -133,17 +133,19 @@ async fn wal_streams_from_safekeeper_into_the_page_store() {
         let commit = append_wal(addr, &wal).await;
         assert_eq!(commit, Lsn(wal.len() as u64), "the whole run should commit");
 
-        // The page server's receiver pulls it back and ingests it.
-        let repo = Repository::new(1_000);
+        // The page server's receiver pulls it back and ingests it into the
+        // tenant's root timeline.
+        let tenant = Tenant::new(1_000);
+        let root = tenant.create_timeline(TimelineId::ZERO).unwrap();
         let cfg = WalReceiverConfig::new(addr, TenantId::ZERO, TimelineId::ZERO, Lsn(0));
-        let mut receiver = WalReceiver::connect(repo.clone(), cfg).await.unwrap();
+        let mut receiver = WalReceiver::connect(root.clone(), cfg).await.unwrap();
 
         let ingested = receiver.poll_once().await.unwrap();
         assert_eq!(ingested, 1, "one WAL record should be decoded and ingested");
         assert_eq!(receiver.cursor(), commit, "cursor advances to the commit LSN");
 
         // The page materializes exactly as the WAL described it.
-        match repo.get_page(PageKey { rel: rel(), block: 0 }, Lsn(commit.raw())).unwrap() {
+        match root.get_page(PageKey { rel: rel(), block: 0 }, Lsn(commit.raw())).unwrap() {
             PageLookup::Page(p) => {
                 assert_eq!(p.len(), 8192);
                 assert_eq!(&p[0..4], &[1, 2, 3, 4]); // before the hole

@@ -8,7 +8,7 @@
 //! to a safekeeper and repeatedly asks for committed WAL from a cursor LSN; each
 //! [`ReadResponse`] chunk is fed into a **long-lived** [`WalStreamDecoder`] so
 //! records that straddle chunk (or page) boundaries are stitched correctly. Each
-//! decoded record is handed to [`Repository::ingest_record`].
+//! decoded record is handed to [`Timeline::ingest_record`].
 //!
 //! The cursor tracks how far WAL has been *fed* into the decoder, not how far it
 //! has been *decoded* — a partially-received trailing record stays buffered in
@@ -25,7 +25,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{debug, info};
 
-use crate::repository::Repository;
+use crate::timeline::Timeline;
 use crate::waldecode::WalStreamDecoder;
 
 /// How to connect to a safekeeper and what slice of WAL to pull.
@@ -59,9 +59,9 @@ impl WalReceiverConfig {
     }
 }
 
-/// A live connection that pulls committed WAL into a [`Repository`].
+/// A live connection that pulls committed WAL into a [`Timeline`].
 pub struct WalReceiver {
-    repo: Arc<Repository>,
+    timeline: Arc<Timeline>,
     cfg: WalReceiverConfig,
     stream: TcpStream,
     /// Long-lived decoder; `None` until the first non-empty chunk arrives.
@@ -71,13 +71,14 @@ pub struct WalReceiver {
 }
 
 impl WalReceiver {
-    /// Connect to the safekeeper and prepare to stream from `cfg.start_lsn`.
-    pub async fn connect(repo: Arc<Repository>, cfg: WalReceiverConfig) -> anyhow::Result<Self> {
+    /// Connect to the safekeeper and prepare to stream from `cfg.start_lsn`
+    /// into `timeline`.
+    pub async fn connect(timeline: Arc<Timeline>, cfg: WalReceiverConfig) -> anyhow::Result<Self> {
         let stream = TcpStream::connect(cfg.safekeeper_addr).await?;
         let _ = stream.set_nodelay(true);
         let cursor = cfg.start_lsn;
         info!(addr = %cfg.safekeeper_addr, %cursor, "WAL receiver connected to safekeeper");
-        Ok(WalReceiver { repo, cfg, stream, decoder: None, cursor })
+        Ok(WalReceiver { timeline, cfg, stream, decoder: None, cursor })
     }
 
     /// The next LSN that will be requested (the ingest frontier).
@@ -125,7 +126,7 @@ impl WalReceiver {
 
         let mut ingested = 0;
         while let Some((lsn, record)) = decoder.poll_decode()? {
-            self.repo.ingest_record(lsn, &record)?;
+            self.timeline.ingest_record(lsn, &record)?;
             ingested += 1;
         }
         debug!(records = ingested, cursor = %self.cursor, "ingested WAL chunk");
