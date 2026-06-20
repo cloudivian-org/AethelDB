@@ -82,15 +82,18 @@ Branching is a control-plane action, so it gets a small line-oriented endpoint
 (`pageserver/src/control.rs`) rather than space on the hot path:
 
 ```
-create <timeline-hex>                  -> ok created <id>
-branch <new-hex> <parent-hex> <lsn>    -> ok branched <new> from <parent> @ <lsn>
-list                                   -> ok <id> <id> ...
+create <timeline-hex>                       -> ok created <id>
+branch <new-hex> <parent-hex> <lsn>         -> ok branched <new> from <parent> @ <lsn>
+receive <timeline-hex> <sk-host:port> <lsn> -> ok receiving <id> from <addr> @ <lsn>
+gc <horizon-lsn>                            -> ok gc @ <lsn>: ...
+list                                        -> ok <id> <id> ...
 ```
+
+`receive` attaches a WAL receiver to any timeline, so each branch can stream
+committed WAL from its own safekeeper position — not just the root.
 
 ## Next
 
-- **Per-branch network ingest** — today the WAL receiver and ingest endpoint
-  target the root timeline; a branch is written via its `Timeline` handle. A
-  per-branch receiver (one WAL stream per timeline) lands with the control plane.
-- **Retention / GC** — bound how far back PITR reaches, and keep a branch's
-  `ancestor_lsn` pinned so its base history is never collected.
+- **Retention / GC** — handled by branch-aware `gc` (see
+  `docs/design/compaction-gc.md`); a branch's `ancestor_lsn` is pinned so its
+  base history is never collected.
