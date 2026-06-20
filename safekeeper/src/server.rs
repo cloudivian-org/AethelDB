@@ -14,19 +14,21 @@
 //! handler is careful never to hold a lock across the `.await` for peer
 //! replication.
 
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 use common::wal_service::{
-    message_type, AppendRequest, AppendResponse, ReadRequest, ReadResponse, PREFIX_LEN,
-    READ_REQUEST_LEN, REQUEST_HEADER_LEN, STATUS_OK, STATUS_STALE_TERM, TYPE_APPEND, TYPE_READ,
-    TYPE_REPLICATE,
+    message_type, AppendRequest, AppendResponse, ReadRequest, ReadResponse, VoteRequest,
+    VoteResponse, PREFIX_LEN, READ_REQUEST_LEN, REQUEST_HEADER_LEN, STATUS_OK, STATUS_STALE_TERM,
+    TYPE_APPEND, TYPE_READ, TYPE_REPLICATE, TYPE_VOTE, VOTE_REQUEST_LEN, VOTE_RESPONSE_LEN,
 };
+use common::{TenantId, TimelineId};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, info, warn};
 
-use crate::consensus::Consensus;
+use crate::consensus::{Consensus, NodeId};
 use crate::replicator::Replicator;
 use crate::storage::WalStorage;
 
@@ -157,6 +159,46 @@ impl Safekeeper {
         Ok(ReadResponse { status: STATUS_OK, commit_lsn, start_lsn: from, payload })
     }
 
+    /// Handle a leadership vote request from a candidate. Grants at most one
+    /// vote per term (the consensus state machine enforces this) and reports our
+    /// current term and flush position.
+    pub fn handle_vote(&self, req: &VoteRequest) -> VoteResponse {
+        let (granted, term) = {
+            let mut c = self.consensus.lock().unwrap();
+            let granted = c.handle_vote_request(req.term, req.candidate);
+            (granted, c.term())
+        };
+        let flush_lsn = self.storage.lock().unwrap().flush_lsn();
+        debug!(term = req.term, candidate = req.candidate, granted, "handled vote request");
+        VoteResponse { granted, term, flush_lsn }
+    }
+
+    /// Stand for election as leader of the group: bump the term and request
+    /// votes from `peers` over the network. Returns whether we won (reached a
+    /// quorum of grants, counting our own self-vote).
+    pub async fn run_election(self: &Arc<Self>, peers: &[(NodeId, SocketAddr)]) -> anyhow::Result<bool> {
+        let (term, candidate) = {
+            let mut c = self.consensus.lock().unwrap();
+            (c.start_election(), c.node_id())
+        };
+        let req = VoteRequest { tenant: TenantId::ZERO, timeline: TimelineId::ZERO, term, candidate };
+        let bytes = req.encode();
+
+        for (node, addr) in peers {
+            match request_vote(*addr, &bytes).await {
+                Ok(resp) if resp.granted => {
+                    self.consensus.lock().unwrap().handle_vote_granted(*node, term);
+                }
+                Ok(resp) => debug!(node, peer_term = resp.term, "vote denied"),
+                Err(e) => warn!(node, %addr, error = %format!("{e:#}"), "vote request failed"),
+            }
+        }
+
+        let won = self.consensus.lock().unwrap().is_leader();
+        info!(term, won, "election finished");
+        Ok(won)
+    }
+
     /// Serve one connection: dispatch framed appends and reads until EOF.
     pub async fn serve_connection(self: &Arc<Self>, mut stream: TcpStream) -> anyhow::Result<()> {
         let mut prefix = [0u8; PREFIX_LEN];
@@ -171,6 +213,7 @@ impl Safekeeper {
                 TYPE_APPEND => self.serve_append(&mut stream, &prefix).await?,
                 TYPE_REPLICATE => self.serve_replicate(&mut stream, &prefix).await?,
                 TYPE_READ => self.serve_read(&mut stream, &prefix).await?,
+                TYPE_VOTE => self.serve_vote(&mut stream, &prefix).await?,
                 other => anyhow::bail!("unknown WAL message type {other}"),
             }
             stream.flush().await.ok();
@@ -246,6 +289,35 @@ impl Safekeeper {
         stream.write_all(&resp.encode()).await.context("writing read response")?;
         Ok(())
     }
+
+    /// Read the rest of a vote request, handle it, and reply.
+    async fn serve_vote(
+        self: &Arc<Self>,
+        stream: &mut TcpStream,
+        prefix: &[u8; PREFIX_LEN],
+    ) -> anyhow::Result<()> {
+        let mut full = vec![0u8; VOTE_REQUEST_LEN];
+        full[..PREFIX_LEN].copy_from_slice(prefix);
+        stream
+            .read_exact(&mut full[PREFIX_LEN..])
+            .await
+            .context("reading vote request")?;
+
+        let req = VoteRequest::decode(&full).context("decoding vote request")?;
+        let resp = self.handle_vote(&req);
+        stream.write_all(&resp.encode()).await.context("writing vote response")?;
+        Ok(())
+    }
+}
+
+/// Send a vote request to a peer and read its response.
+async fn request_vote(addr: SocketAddr, bytes: &[u8]) -> anyhow::Result<VoteResponse> {
+    let mut stream = TcpStream::connect(addr).await?;
+    let _ = stream.set_nodelay(true);
+    stream.write_all(bytes).await?;
+    let mut resp = vec![0u8; VOTE_RESPONSE_LEN];
+    stream.read_exact(&mut resp).await?;
+    Ok(VoteResponse::decode(&resp)?)
 }
 
 /// Run the ingest accept loop on `listener`.
