@@ -148,6 +148,8 @@ The same operations are available as a JSON API (default `:6403`) for a control
 plane or `aethelctl`-style tooling:
 
 ```bash
+# Start the page server with --control-token <secret> to require auth; then
+# pass `-H "Authorization: Bearer <secret>"` on every /v1 call (/healthz is open).
 curl localhost:6403/healthz
 curl -XPOST localhost:6403/v1/timelines  -d '{"id":"<32-hex>"}'
 curl -XPOST localhost:6403/v1/branches   -d '{"timeline":"<hex>","parent":"<hex>","lsn":5000}'

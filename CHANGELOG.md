@@ -21,6 +21,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   survives a restart. See `pageserver/src/catalog.rs`.
 - **Optional PgBouncer pooling tier**: verified end-to-end (Docker) and on
   Kubernetes, with applyable demo fixtures. See `deploy/pooling/`.
+- **Control-plane auth**: optional `--control-token` gates the line endpoint
+  (`auth <token>`) and the HTTP API (`Authorization: Bearer <token>`);
+  `/healthz` stays open.
 - **`--wal-redo` wiring**: select the real Postgres wal-redo backend at runtime.
 - **Compressed full-page images**: decode `pglz` / `lz4` / `zstd` FPIs.
 - **Proxy `CancelRequest` routing**: cancels reach the backend that owns the

@@ -69,7 +69,7 @@ async fn branch_over_the_network_is_isolated() {
     let (l, page_addr) = bind().await;
     tokio::spawn(serve_pages(pageserver::TenantManager::single(tenant.clone()), l));
     let (l, control_addr) = bind().await;
-    tokio::spawn(serve_control(pageserver::TenantManager::single(tenant.clone()), None, l));
+    tokio::spawn(serve_control(pageserver::TenantManager::single(tenant.clone()), None, l, None));
 
     let branch_id = TimelineId::from_bytes([2; 16]);
 

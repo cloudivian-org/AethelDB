@@ -102,6 +102,13 @@ struct Args {
     /// Database name the wal-redo process connects to.
     #[arg(long, env = "SP_PS_WAL_REDO_DB", default_value = "postgres")]
     wal_redo_db: String,
+
+    /// Shared secret protecting the control plane. When set, the line control
+    /// endpoint requires `auth <token>` and the HTTP API requires an
+    /// `Authorization: Bearer <token>` header (`/healthz` stays open). Unset =
+    /// unauthenticated (keep the endpoints on an internal network).
+    #[arg(long, env = "SP_PS_CONTROL_TOKEN")]
+    control_token: Option<String>,
 }
 
 #[tokio::main]
@@ -191,14 +198,28 @@ async fn main() -> anyhow::Result<()> {
     let control_listener = TcpListener::bind(args.control_listen)
         .await
         .with_context(|| format!("failed to bind control {}", args.control_listen))?;
-    tokio::spawn(serve_control(tenants.clone(), Some(store.clone()), control_listener));
+    let control_token: Option<Arc<str>> = args.control_token.as_deref().map(Arc::from);
+    if control_token.is_some() {
+        info!("control plane requires authentication (token configured)");
+    }
+    tokio::spawn(serve_control(
+        tenants.clone(),
+        Some(store.clone()),
+        control_listener,
+        control_token.clone(),
+    ));
     info!(addr = %args.control_listen, "branch control endpoint ready");
 
     // HTTP/JSON control-plane API.
     let http_listener = TcpListener::bind(args.http_listen)
         .await
         .with_context(|| format!("failed to bind http api {}", args.http_listen))?;
-    tokio::spawn(pageserver::serve_http_api(tenants.clone(), Some(store.clone()), http_listener));
+    tokio::spawn(pageserver::serve_http_api(
+        tenants.clone(),
+        Some(store.clone()),
+        http_listener,
+        control_token.clone(),
+    ));
     info!(addr = %args.http_listen, "HTTP control-plane API ready");
 
     // Optional: pull committed WAL directly from a safekeeper (Phase 4) into the

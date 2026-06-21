@@ -116,9 +116,11 @@ Every pod is annotated `prometheus.io/scrape: "true"` with its metrics port.
    them; expose **only** the proxy's client port externally.
 
 5. **Protect the control plane.** The page server's line-oriented control
-   endpoint (`:6402`) and HTTP/JSON API (`:6403`) can create/branch/GC timelines
-   with no auth. Keep them on an internal interface and front them with your
-   control plane's authn/authz.
+   endpoint (`:6402`) and HTTP/JSON API (`:6403`) can create/branch/GC timelines.
+   Set `--control-token <secret>` (env `SP_PS_CONTROL_TOKEN`) to require auth —
+   the line endpoint then needs `auth <token>` and the HTTP API an
+   `Authorization: Bearer <token>` header (`/healthz` stays open for probes).
+   Still keep these endpoints on an internal interface.
 
 6. **Run as non-root, read-only.** Set `runAsNonRoot`, a read-only root
    filesystem, and dropped capabilities on the service containers; persist only

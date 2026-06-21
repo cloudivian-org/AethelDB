@@ -129,7 +129,7 @@ async fn timeline_ingests_wal_from_a_safekeeper_via_control() {
         let a = l.local_addr().unwrap();
         (l, a)
     };
-    tokio::spawn(serve_control(pageserver::TenantManager::single(tenant.clone()), None, l));
+    tokio::spawn(serve_control(pageserver::TenantManager::single(tenant.clone()), None, l, None));
 
     let tl_id = TimelineId::from_bytes([7; 16]);
 

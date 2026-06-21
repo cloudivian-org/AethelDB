@@ -60,7 +60,7 @@ async fn topology_survives_restart() {
     let m1 = TenantManager::with_catalog(1_000, None, store.clone());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let handle = tokio::spawn(serve_http_api(m1, Some(store.clone()), listener));
+    let handle = tokio::spawn(serve_http_api(m1, Some(store.clone()), listener, None));
 
     let acme = tid(0xAC);
     // Create a tenant, a root timeline, and a branch off it — each persists.
