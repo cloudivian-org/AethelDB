@@ -11,6 +11,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-21
+
+The operational-layer release: multi-tenancy with a durable catalog, optional
+pooling, control-plane auth, and full observability — on top of the 0.1.0 data
+plane.
+
 ### Added
 - **Multi-tenancy**: one page server hosts many isolated tenants. Reads route by
   `(TenantId, TimelineId)`; the line and HTTP/JSON control planes are
@@ -78,5 +84,6 @@ The first release: a working, end-to-end-tested serverless-PostgreSQL data plane
 - Docker Compose stack and Kubernetes (Kustomize) manifests with RBAC.
 - CI (fmt, clippy, build, test, MSRV) and a Python end-to-end suite.
 
-[Unreleased]: https://github.com/cloudivian-org/AethelDB/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/cloudivian-org/AethelDB/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/cloudivian-org/AethelDB/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/cloudivian-org/AethelDB/releases/tag/v0.1.0
