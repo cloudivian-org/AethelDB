@@ -21,15 +21,18 @@ pub static WAKES: Lazy<IntCounter> = Lazy::new(|| {
 
 /// SCRAM authentication failures (rejected before any cold start).
 pub static AUTH_FAILURES: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!("aethel_proxy_auth_failures_total", "SCRAM authentication failures").unwrap()
+    register_int_counter!("aethel_proxy_auth_failures_total", "SCRAM authentication failures")
+        .unwrap()
 });
 
 /// Idle tenants stopped by the reaper.
 pub static IDLE_REAPS: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!("aethel_proxy_idle_reaps_total", "Idle compute nodes scaled to zero").unwrap()
+    register_int_counter!("aethel_proxy_idle_reaps_total", "Idle compute nodes scaled to zero")
+        .unwrap()
 });
 
 /// Connections currently splicing client <-> backend.
 pub static ACTIVE_CONNECTIONS: Lazy<IntGauge> = Lazy::new(|| {
-    register_int_gauge!("aethel_proxy_active_connections", "Connections currently splicing").unwrap()
+    register_int_gauge!("aethel_proxy_active_connections", "Connections currently splicing")
+        .unwrap()
 });

@@ -225,7 +225,7 @@ mod tests {
     fn newer_term_demotes_to_follower() {
         let mut c = Consensus::new(1, vec![1, 2, 3]);
         c.start_election(); // term 1, candidate
-        // A peer requests a vote in a higher term -> we step down and may grant.
+                            // A peer requests a vote in a higher term -> we step down and may grant.
         let granted = c.handle_vote_request(5, 2);
         assert!(granted);
         assert_eq!(c.term(), 5);

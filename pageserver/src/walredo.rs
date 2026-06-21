@@ -112,7 +112,10 @@ mod tests {
     use common::{ForkNumber, RelTag};
 
     fn key() -> PageKey {
-        PageKey { rel: RelTag { spc_node: 1, db_node: 2, rel_node: 3, fork: ForkNumber::Main }, block: 0 }
+        PageKey {
+            rel: RelTag { spc_node: 1, db_node: 2, rel_node: 3, fork: ForkNumber::Main },
+            block: 0,
+        }
     }
 
     #[test]

@@ -85,9 +85,8 @@ fn parse_tenant(spec: &str) -> anyhow::Result<(String, TenantState)> {
     let (name, addr) = spec
         .split_once('=')
         .with_context(|| format!("tenant spec `{spec}` must be NAME=host:port"))?;
-    let addr: SocketAddr = addr
-        .parse()
-        .with_context(|| format!("invalid backend address in tenant spec `{spec}`"))?;
+    let addr: SocketAddr =
+        addr.parse().with_context(|| format!("invalid backend address in tenant spec `{spec}`"))?;
     // Start asleep: the first connection triggers the activator + readiness probe.
     Ok((name.to_owned(), TenantState::new(addr, false)))
 }
@@ -130,7 +129,8 @@ async fn main() -> anyhow::Result<()> {
     // Enable TLS termination when a cert+key pair is configured.
     let proxy = match (&args.tls_cert, &args.tls_key) {
         (Some(cert), Some(key)) => {
-            let acceptor = proxy::tls::acceptor_from_pem(cert, key).context("loading TLS cert/key")?;
+            let acceptor =
+                proxy::tls::acceptor_from_pem(cert, key).context("loading TLS cert/key")?;
             info!(cert = %cert.display(), "TLS termination enabled");
             Proxy::with_tls(registry, activator, health, acceptor)
         }

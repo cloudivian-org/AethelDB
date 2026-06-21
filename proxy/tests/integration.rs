@@ -127,7 +127,8 @@ async fn cold_start_invokes_activator() {
     let backend = spawn_echo_backend().await;
 
     // A start command that drops a marker file proves the activator ran.
-    let marker = std::env::temp_dir().join(format!("aethel-proxy-coldstart-{}", std::process::id()));
+    let marker =
+        std::env::temp_dir().join(format!("aethel-proxy-coldstart-{}", std::process::id()));
     let _ = std::fs::remove_file(&marker);
     let start_cmd = format!("touch {}", marker.display());
     let activator = CommandActivator::new(start_cmd, "true");

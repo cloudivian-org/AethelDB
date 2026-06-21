@@ -110,16 +110,14 @@ where
     }
     let client_first = parse_sasl_initial(&body)?;
     let client_first_bare = strip_gs2_header(&client_first)?;
-    let client_nonce = field(client_first_bare, 'r').ok_or(ScramError::Protocol("no client nonce"))?;
+    let client_nonce =
+        field(client_first_bare, 'r').ok_or(ScramError::Protocol("no client nonce"))?;
 
     // 3. Send the server-first message.
     let server_nonce = make_nonce();
     let combined_nonce = format!("{client_nonce}{server_nonce}");
-    let server_first = format!(
-        "r={combined_nonce},s={},i={}",
-        B64.encode(&secret.salt),
-        secret.iterations
-    );
+    let server_first =
+        format!("r={combined_nonce},s={},i={}", B64.encode(&secret.salt), secret.iterations);
     write_auth_message(stream, 11, server_first.as_bytes()).await?; // SASLContinue
 
     // 4. Read the client's final message and verify the proof.
@@ -138,8 +136,7 @@ where
         .map(|(head, _)| head)
         .ok_or(ScramError::Protocol("no proof field"))?;
 
-    let auth_message =
-        format!("{client_first_bare},{server_first},{client_final_without_proof}");
+    let auth_message = format!("{client_first_bare},{server_first},{client_final_without_proof}");
     let client_signature = hmac(&secret.stored_key, auth_message.as_bytes());
     let proof = B64.decode(proof_b64).map_err(|_| ScramError::Protocol("bad proof base64"))?;
     if proof.len() != 32 {
@@ -165,7 +162,11 @@ where
 /// Run the SCRAM-SHA-256 exchange as the *client* over `stream`, proving
 /// knowledge of `password`. Useful for tests and for the proxy authenticating to
 /// an upstream. Returns `Ok` only if the server's signature also verifies.
-pub async fn client_authenticate<S>(stream: &mut S, user: &str, password: &str) -> Result<(), ScramError>
+pub async fn client_authenticate<S>(
+    stream: &mut S,
+    user: &str,
+    password: &str,
+) -> Result<(), ScramError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -187,13 +188,17 @@ where
 
     // Read server-first.
     let (_, body) = read_message(stream).await?;
-    let server_first =
-        std::str::from_utf8(body.get(4..).unwrap_or_default()).map_err(|_| ScramError::Protocol("bad utf8"))?.to_string();
-    let combined_nonce = field(&server_first, 'r').ok_or(ScramError::Protocol("no nonce"))?.to_string();
-    let salt = B64.decode(field(&server_first, 's').ok_or(ScramError::Protocol("no salt"))?)
+    let server_first = std::str::from_utf8(body.get(4..).unwrap_or_default())
+        .map_err(|_| ScramError::Protocol("bad utf8"))?
+        .to_string();
+    let combined_nonce =
+        field(&server_first, 'r').ok_or(ScramError::Protocol("no nonce"))?.to_string();
+    let salt = B64
+        .decode(field(&server_first, 's').ok_or(ScramError::Protocol("no salt"))?)
         .map_err(|_| ScramError::Protocol("bad salt"))?;
-    let iterations: u32 =
-        field(&server_first, 'i').and_then(|s| s.parse().ok()).ok_or(ScramError::Protocol("no iterations"))?;
+    let iterations: u32 = field(&server_first, 'i')
+        .and_then(|s| s.parse().ok())
+        .ok_or(ScramError::Protocol("no iterations"))?;
 
     // Compute the proof.
     let salted = hi(password.as_bytes(), &salt, iterations);
@@ -211,7 +216,8 @@ where
 
     // Verify the server signature in SASLFinal.
     let (_, body) = read_message(stream).await?;
-    let server_final = std::str::from_utf8(body.get(4..).unwrap_or_default()).map_err(|_| ScramError::Protocol("bad utf8"))?;
+    let server_final = std::str::from_utf8(body.get(4..).unwrap_or_default())
+        .map_err(|_| ScramError::Protocol("bad utf8"))?;
     let v = field(server_final, 'v').ok_or(ScramError::Protocol("no server signature"))?;
     let server_key = hmac(&salted, b"Server Key");
     if v != B64.encode(hmac(&server_key, auth_message.as_bytes())) {
@@ -221,7 +227,10 @@ where
 }
 
 /// Write a client ('p') message: int32 length (self-inclusive) + body.
-async fn write_p_message<S: AsyncWrite + Unpin>(stream: &mut S, body: &[u8]) -> Result<(), ScramError> {
+async fn write_p_message<S: AsyncWrite + Unpin>(
+    stream: &mut S,
+    body: &[u8],
+) -> Result<(), ScramError> {
     let len = 4 + body.len();
     let mut msg = Vec::with_capacity(1 + len);
     msg.push(b'p');

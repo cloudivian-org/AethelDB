@@ -152,10 +152,8 @@ impl Safekeeper {
         let storage = self.storage.lock().unwrap();
         let from = req.start_lsn.max(storage.start_lsn());
 
-        let available = commit_lsn
-            .raw()
-            .saturating_sub(from.raw())
-            .min(req.max_bytes as u64) as usize;
+        let available =
+            commit_lsn.raw().saturating_sub(from.raw()).min(req.max_bytes as u64) as usize;
 
         let mut payload = vec![0u8; available];
         if available > 0 {
@@ -184,12 +182,16 @@ impl Safekeeper {
     /// Stand for election as leader of the group: bump the term and request
     /// votes from `peers` over the network. Returns whether we won (reached a
     /// quorum of grants, counting our own self-vote).
-    pub async fn run_election(self: &Arc<Self>, peers: &[(NodeId, SocketAddr)]) -> anyhow::Result<bool> {
+    pub async fn run_election(
+        self: &Arc<Self>,
+        peers: &[(NodeId, SocketAddr)],
+    ) -> anyhow::Result<bool> {
         let (term, candidate) = {
             let mut c = self.consensus.lock().unwrap();
             (c.start_election(), c.node_id())
         };
-        let req = VoteRequest { tenant: TenantId::ZERO, timeline: TimelineId::ZERO, term, candidate };
+        let req =
+            VoteRequest { tenant: TenantId::ZERO, timeline: TimelineId::ZERO, term, candidate };
         let bytes = req.encode();
 
         for (node, addr) in peers {
@@ -237,10 +239,7 @@ impl Safekeeper {
         // Assemble the full fixed header (prefix + remainder), then the payload.
         let mut full = vec![0u8; REQUEST_HEADER_LEN];
         full[..PREFIX_LEN].copy_from_slice(prefix);
-        stream
-            .read_exact(&mut full[PREFIX_LEN..])
-            .await
-            .context("reading append header")?;
+        stream.read_exact(&mut full[PREFIX_LEN..]).await.context("reading append header")?;
         let plen = AppendRequest::payload_len(&full).context("parsing append header")?;
         full.resize(REQUEST_HEADER_LEN + plen, 0);
         stream
@@ -262,10 +261,7 @@ impl Safekeeper {
     ) -> anyhow::Result<()> {
         let mut full = vec![0u8; REQUEST_HEADER_LEN];
         full[..PREFIX_LEN].copy_from_slice(prefix);
-        stream
-            .read_exact(&mut full[PREFIX_LEN..])
-            .await
-            .context("reading replicate header")?;
+        stream.read_exact(&mut full[PREFIX_LEN..]).await.context("reading replicate header")?;
         let plen = AppendRequest::payload_len(&full).context("parsing replicate header")?;
         full.resize(REQUEST_HEADER_LEN + plen, 0);
         stream
@@ -287,10 +283,7 @@ impl Safekeeper {
     ) -> anyhow::Result<()> {
         let mut full = vec![0u8; READ_REQUEST_LEN];
         full[..PREFIX_LEN].copy_from_slice(prefix);
-        stream
-            .read_exact(&mut full[PREFIX_LEN..])
-            .await
-            .context("reading read request")?;
+        stream.read_exact(&mut full[PREFIX_LEN..]).await.context("reading read request")?;
 
         let req = ReadRequest::decode(&full).context("decoding read request")?;
         let resp = self.handle_read(&req)?;
@@ -306,10 +299,7 @@ impl Safekeeper {
     ) -> anyhow::Result<()> {
         let mut full = vec![0u8; VOTE_REQUEST_LEN];
         full[..PREFIX_LEN].copy_from_slice(prefix);
-        stream
-            .read_exact(&mut full[PREFIX_LEN..])
-            .await
-            .context("reading vote request")?;
+        stream.read_exact(&mut full[PREFIX_LEN..]).await.context("reading vote request")?;
 
         let req = VoteRequest::decode(&full).context("decoding vote request")?;
         let resp = self.handle_vote(&req);

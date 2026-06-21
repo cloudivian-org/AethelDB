@@ -37,11 +37,11 @@ pub mod walredo;
 pub mod walredo_process;
 pub mod walredo_proto;
 
+pub use control::serve_control;
+pub use httpapi::serve_http_api;
 pub use layer::{Layer, LayerId};
 pub use objstore::{LocalObjectStore, ObjectStore, S3ObjectStore};
 pub use page::{ByteEdit, Modification, PageVersion, WalRecord};
-pub use control::serve_control;
-pub use httpapi::serve_http_api;
 pub use repository::{PageLookup, Repository};
 pub use server::{serve_ingest, serve_pages};
 pub use tenant::{Tenant, TenantError};

@@ -44,7 +44,11 @@ impl TenantState {
     }
 
     /// Like [`new`](Self::new), but with a SCRAM verifier for proxy-side auth.
-    pub fn with_scram(backend: SocketAddr, running: bool, scram: crate::scram::ScramSecret) -> Self {
+    pub fn with_scram(
+        backend: SocketAddr,
+        running: bool,
+        scram: crate::scram::ScramSecret,
+    ) -> Self {
         TenantState { scram: Some(scram), ..Self::new(backend, running) }
     }
 
@@ -114,12 +118,9 @@ pub struct Registry {
     tenants: HashMap<String, std::sync::Arc<TenantState>>,
 }
 
-impl Registry {
+impl FromIterator<(String, TenantState)> for Registry {
     /// Build a registry from `(name, state)` pairs.
-    pub fn from_iter<I>(entries: I) -> Self
-    where
-        I: IntoIterator<Item = (String, TenantState)>,
-    {
+    fn from_iter<I: IntoIterator<Item = (String, TenantState)>>(entries: I) -> Self {
         Registry {
             tenants: entries
                 .into_iter()
@@ -127,7 +128,9 @@ impl Registry {
                 .collect(),
         }
     }
+}
 
+impl Registry {
     /// Look up a tenant by name.
     pub fn get(&self, tenant: &str) -> Option<std::sync::Arc<TenantState>> {
         self.tenants.get(tenant).cloned()

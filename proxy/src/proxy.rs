@@ -57,7 +57,11 @@ pub struct Proxy {
 
 impl Proxy {
     /// Assemble the proxy from its collaborators (no TLS).
-    pub fn new(registry: Arc<Registry>, activator: Arc<dyn Activator>, health: HealthConfig) -> Arc<Self> {
+    pub fn new(
+        registry: Arc<Registry>,
+        activator: Arc<dyn Activator>,
+        health: HealthConfig,
+    ) -> Arc<Self> {
         Arc::new(Proxy { registry, activator, health, tls: None })
     }
 
@@ -91,7 +95,11 @@ impl Proxy {
 
     /// Read the first packet at the raw TCP level (pre-TLS), handle SSL/GSS
     /// negotiation, and continue over the resulting stream (TCP or TLS).
-    async fn serve_client(self: &Arc<Self>, mut client: TcpStream, peer: SocketAddr) -> anyhow::Result<()> {
+    async fn serve_client(
+        self: &Arc<Self>,
+        mut client: TcpStream,
+        peer: SocketAddr,
+    ) -> anyhow::Result<()> {
         let raw = match read_raw_message(&mut client).await? {
             Some(raw) => raw,
             None => return Ok(()), // clean EOF before any startup
@@ -199,10 +207,7 @@ impl Proxy {
         let mut backend = TcpStream::connect(backend_addr)
             .await
             .with_context(|| format!("connecting to backend {backend_addr}"))?;
-        backend
-            .write_all(&startup.raw)
-            .await
-            .context("forwarding startup packet to backend")?;
+        backend.write_all(&startup.raw).await.context("forwarding startup packet to backend")?;
 
         // Account for this connection for the lifetime of the splice; the guard
         // guarantees the gauge is decremented even on error or panic.
@@ -218,7 +223,11 @@ impl Proxy {
 
     /// Make sure the tenant's compute is running and reachable, holding the
     /// caller's client socket open for the duration.
-    async fn ensure_awake(self: &Arc<Self>, tenant: &str, state: &TenantState) -> anyhow::Result<()> {
+    async fn ensure_awake(
+        self: &Arc<Self>,
+        tenant: &str,
+        state: &TenantState,
+    ) -> anyhow::Result<()> {
         if !state.is_running() {
             info!(tenant, "cold start: triggering activator");
             crate::metrics::WAKES.inc();
@@ -293,10 +302,7 @@ async fn read_raw_message<S: AsyncRead + Unpin>(stream: &mut S) -> anyhow::Resul
 
     let mut raw = vec![0u8; declared];
     raw[..4].copy_from_slice(&len_buf);
-    stream
-        .read_exact(&mut raw[4..])
-        .await
-        .context("reading packet body")?;
+    stream.read_exact(&mut raw[4..]).await.context("reading packet body")?;
     Ok(Some(raw))
 }
 

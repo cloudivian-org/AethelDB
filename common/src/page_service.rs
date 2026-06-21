@@ -163,7 +163,8 @@ impl Request {
             return Err(Error::parse("unsupported protocol version"));
         }
         let type_tag = buf[5];
-        let fork = ForkNumber::from_raw(buf[6]).ok_or_else(|| Error::parse("invalid fork number"))?;
+        let fork =
+            ForkNumber::from_raw(buf[6]).ok_or_else(|| Error::parse("invalid fork number"))?;
 
         let body = &buf[HEADER_LEN..];
         let expected = match type_tag {
@@ -215,8 +216,8 @@ impl Response {
         buf.push(status);
         buf.push(0); // reserved
         buf.push(0); // reserved
-        // NOTE: header is 8 bytes total; the 4-byte length lives at offset 4..8?
-        // We keep magic(4)+version(1)+status(1)+rsvd(2) = 8, then a 4-byte length.
+                     // NOTE: header is 8 bytes total; the 4-byte length lives at offset 4..8?
+                     // We keep magic(4)+version(1)+status(1)+rsvd(2) = 8, then a 4-byte length.
         put_u32(&mut buf, payload.len() as u32);
         buf.extend_from_slice(&payload);
         buf
@@ -309,7 +310,10 @@ mod tests {
 
     #[test]
     fn relsize_notfound_and_error_round_trip() {
-        assert_eq!(Response::decode(&Response::RelSize(99).encode()).unwrap(), Response::RelSize(99));
+        assert_eq!(
+            Response::decode(&Response::RelSize(99).encode()).unwrap(),
+            Response::RelSize(99)
+        );
         assert_eq!(Response::decode(&Response::NotFound.encode()).unwrap(), Response::NotFound);
         match Response::decode(&Response::Error("boom".into()).encode()).unwrap() {
             Response::Error(m) => assert_eq!(m, "boom"),

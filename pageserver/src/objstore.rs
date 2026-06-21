@@ -42,10 +42,7 @@ impl LocalObjectStore {
 
     /// Map an object key to a filesystem path, rejecting traversal.
     fn path_for(&self, key: &str) -> anyhow::Result<PathBuf> {
-        anyhow::ensure!(
-            !key.contains("..") && !key.starts_with('/'),
-            "invalid object key {key:?}"
-        );
+        anyhow::ensure!(!key.contains("..") && !key.starts_with('/'), "invalid object key {key:?}");
         Ok(self.root.join(key))
     }
 }
@@ -181,7 +178,12 @@ impl ObjectStore for S3ObjectStore {
 }
 
 /// Recursively collect object keys (paths relative to `root`) under `dir`.
-fn collect_keys(root: &Path, dir: &Path, prefix: &str, out: &mut Vec<String>) -> anyhow::Result<()> {
+fn collect_keys(
+    root: &Path,
+    dir: &Path,
+    prefix: &str,
+    out: &mut Vec<String>,
+) -> anyhow::Result<()> {
     if !dir.exists() {
         return Ok(());
     }

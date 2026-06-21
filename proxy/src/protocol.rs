@@ -81,10 +81,7 @@ impl StartupMessage {
     /// We key tenants on the requested database name, falling back to the user
     /// name (PostgreSQL itself defaults the database to the user when omitted).
     pub fn tenant(&self) -> Option<&str> {
-        self.parameters
-            .get("database")
-            .or_else(|| self.parameters.get("user"))
-            .map(String::as_str)
+        self.parameters.get("database").or_else(|| self.parameters.get("user")).map(String::as_str)
     }
 }
 
@@ -154,13 +151,8 @@ fn parse_parameters(mut body: &[u8]) -> Result<HashMap<String, String>, Protocol
 /// Split off the next NUL-terminated string from `body`, advancing the slice
 /// past the terminator.
 fn take_cstr(body: &mut &[u8]) -> Result<String, ProtocolError> {
-    let nul = body
-        .iter()
-        .position(|&b| b == 0)
-        .ok_or(ProtocolError::UnterminatedParameters)?;
-    let s = std::str::from_utf8(&body[..nul])
-        .map_err(|_| ProtocolError::InvalidUtf8)?
-        .to_owned();
+    let nul = body.iter().position(|&b| b == 0).ok_or(ProtocolError::UnterminatedParameters)?;
+    let s = std::str::from_utf8(&body[..nul]).map_err(|_| ProtocolError::InvalidUtf8)?.to_owned();
     *body = &body[nul + 1..];
     Ok(s)
 }
@@ -263,10 +255,7 @@ mod tests {
         ));
 
         // Too short to even hold a length + code.
-        assert!(matches!(
-            parse_first_message(vec![0, 0, 0, 4]),
-            Err(ProtocolError::BadLength(_))
-        ));
+        assert!(matches!(parse_first_message(vec![0, 0, 0, 4]), Err(ProtocolError::BadLength(_))));
     }
 
     #[test]

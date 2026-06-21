@@ -12,9 +12,9 @@
 //! * `GET  /v1/timelines`             — list timeline ids.
 //! * `POST /v1/timelines`             — `{ "id": "<hex>" }` create a root timeline.
 //! * `POST /v1/branches`              — `{ "timeline", "parent", "lsn" }` branch.
-//! * `POST /v1/timelines/receive`     — `{ "timeline", "safekeeper", "start_lsn" }`
-//!                                       attach a WAL receiver to a timeline.
-//! * `POST /v1/gc`                    — `{ "horizon_lsn" }` compact + branch-aware GC.
+//! * `POST /v1/timelines/receive` — `{ "timeline", "safekeeper", "start_lsn" }`:
+//!   attach a WAL receiver to a timeline.
+//! * `POST /v1/gc` — `{ "horizon_lsn" }`: compact + branch-aware GC.
 //!
 //! The HTTP is hand-rolled (one request per connection, `Connection: close`) to
 //! keep the dependency footprint small and consistent with the rest of the
@@ -120,7 +120,8 @@ async fn route(
         ("GET", "/healthz") => (200, r#"{"status":"ok"}"#.to_string()),
 
         ("GET", "/v1/timelines") => {
-            let mut ids: Vec<String> = tenant.timeline_ids().iter().map(|t| t.to_string()).collect();
+            let mut ids: Vec<String> =
+                tenant.timeline_ids().iter().map(|t| t.to_string()).collect();
             ids.sort();
             (200, serde_json::json!({ "timelines": ids }).to_string())
         }
@@ -145,7 +146,8 @@ async fn route(
                 Ok(b) => b,
                 Err(e) => return err(400, format!("invalid body: {e}")),
             };
-            let (Ok(new), Ok(parent)) = (b.timeline.parse::<TimelineId>(), b.parent.parse::<TimelineId>())
+            let (Ok(new), Ok(parent)) =
+                (b.timeline.parse::<TimelineId>(), b.parent.parse::<TimelineId>())
             else {
                 return err(400, "timeline and parent must be 32 hex chars");
             };
@@ -235,7 +237,11 @@ async fn read_request(socket: &mut TcpStream) -> anyhow::Result<Option<(String, 
         }
         let n = socket.read(&mut chunk).await?;
         if n == 0 {
-            return if buf.is_empty() { Ok(None) } else { Err(anyhow::anyhow!("incomplete request")) };
+            return if buf.is_empty() {
+                Ok(None)
+            } else {
+                Err(anyhow::anyhow!("incomplete request"))
+            };
         }
         buf.extend_from_slice(&chunk[..n]);
         anyhow::ensure!(buf.len() < (1 << 20), "request headers too large");

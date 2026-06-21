@@ -1,3 +1,6 @@
 # Keep formatting deterministic across contributors.
 edition = "2021"
 max_width = 100
+# Keep short constructs (struct literals, calls, arrays) on one line when they
+# fit within max_width — matches the codebase's compact style.
+use_small_heuristics = "Max"

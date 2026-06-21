@@ -275,7 +275,11 @@ async fn commit_advances_with_one_peer_down() {
     let outcome = tokio::time::timeout(Duration::from_secs(5), async {
         let mut stream = TcpStream::connect(leader_addr).await.unwrap();
         let r = send_append(&mut stream, &append(0, b"still-commits")).await;
-        assert_eq!(r.commit_lsn, Lsn("still-commits".len() as u64), "quorum reached without peer 3");
+        assert_eq!(
+            r.commit_lsn,
+            Lsn("still-commits".len() as u64),
+            "quorum reached without peer 3"
+        );
     })
     .await;
     assert!(outcome.is_ok(), "one-peer-down test timed out");

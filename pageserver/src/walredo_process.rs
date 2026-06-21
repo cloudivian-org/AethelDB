@@ -109,7 +109,8 @@ impl PostgresRedoManager {
             .spawn()
             .map_err(|e| RedoError::Process(format!("spawn {}: {e}", self.program.display())))?;
         let stdin = child.stdin.take().ok_or_else(|| RedoError::Process("no stdin pipe".into()))?;
-        let stdout = child.stdout.take().ok_or_else(|| RedoError::Process("no stdout pipe".into()))?;
+        let stdout =
+            child.stdout.take().ok_or_else(|| RedoError::Process("no stdout pipe".into()))?;
         debug!(program = %self.program.display(), "spawned wal-redo process");
         Ok(RedoProc { child, stdin, stdout: BufReader::new(stdout) })
     }
@@ -117,11 +118,15 @@ impl PostgresRedoManager {
     /// Write one request and read one response over the child's pipes.
     fn exchange(proc: &mut RedoProc, req: &RedoRequest) -> Result<Vec<u8>, RedoError> {
         let bytes = req.encode();
-        proc.stdin.write_all(&bytes).map_err(|e| RedoError::Process(format!("write request: {e}")))?;
+        proc.stdin
+            .write_all(&bytes)
+            .map_err(|e| RedoError::Process(format!("write request: {e}")))?;
         proc.stdin.flush().map_err(|e| RedoError::Process(format!("flush request: {e}")))?;
 
         let mut header = [0u8; RESP_HEADER_LEN];
-        proc.stdout.read_exact(&mut header).map_err(|e| RedoError::Process(format!("read response header: {e}")))?;
+        proc.stdout
+            .read_exact(&mut header)
+            .map_err(|e| RedoError::Process(format!("read response header: {e}")))?;
         let magic = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
         if magic != RESP_MAGIC {
             return Err(RedoError::Process(format!("bad response magic {magic:#010x}")));
@@ -132,14 +137,20 @@ impl PostgresRedoManager {
         match header[5] {
             STATUS_OK => {
                 let mut page = vec![0u8; PAGE_SIZE];
-                proc.stdout.read_exact(&mut page).map_err(|e| RedoError::Process(format!("read page: {e}")))?;
+                proc.stdout
+                    .read_exact(&mut page)
+                    .map_err(|e| RedoError::Process(format!("read page: {e}")))?;
                 Ok(page)
             }
             STATUS_ERR => {
                 let mut len = [0u8; 4];
-                proc.stdout.read_exact(&mut len).map_err(|e| RedoError::Process(format!("read error len: {e}")))?;
+                proc.stdout
+                    .read_exact(&mut len)
+                    .map_err(|e| RedoError::Process(format!("read error len: {e}")))?;
                 let mut msg = vec![0u8; u32::from_be_bytes(len) as usize];
-                proc.stdout.read_exact(&mut msg).map_err(|e| RedoError::Process(format!("read error msg: {e}")))?;
+                proc.stdout
+                    .read_exact(&mut msg)
+                    .map_err(|e| RedoError::Process(format!("read error msg: {e}")))?;
                 Err(RedoError::RedoFailed(String::from_utf8_lossy(&msg).into_owned()))
             }
             other => Err(RedoError::Process(format!("unknown response status {other}"))),

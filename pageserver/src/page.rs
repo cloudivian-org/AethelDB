@@ -85,7 +85,10 @@ impl PageVersion {
                     let start = e.offset as usize;
                     let end = start + e.data.len();
                     if end > PAGE_SIZE {
-                        return Err(PageError::EditOutOfBounds { offset: start, len: e.data.len() });
+                        return Err(PageError::EditOutOfBounds {
+                            offset: start,
+                            len: e.data.len(),
+                        });
                     }
                     page[start..end].copy_from_slice(&e.data);
                 }
@@ -277,7 +280,8 @@ mod tests {
     #[test]
     fn out_of_bounds_edit_is_rejected() {
         let mut page = vec![0u8; PAGE_SIZE];
-        let d = PageVersion::Delta(vec![ByteEdit { offset: (PAGE_SIZE - 1) as u16, data: vec![1, 2] }]);
+        let d =
+            PageVersion::Delta(vec![ByteEdit { offset: (PAGE_SIZE - 1) as u16, data: vec![1, 2] }]);
         assert!(matches!(d.apply_to(&mut page), Err(PageError::EditOutOfBounds { .. })));
     }
 

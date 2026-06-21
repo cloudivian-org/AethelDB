@@ -19,15 +19,24 @@ pub static WAL_RECORDS: Lazy<IntCounter> = Lazy::new(|| {
 
 /// Layers offloaded to the object store.
 pub static LAYERS_OFFLOADED: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!("aethel_pageserver_layers_offloaded_total", "Layers uploaded to object storage").unwrap()
+    register_int_counter!(
+        "aethel_pageserver_layers_offloaded_total",
+        "Layers uploaded to object storage"
+    )
+    .unwrap()
 });
 
 /// Page versions removed by compaction/GC.
 pub static GC_VERSIONS_REMOVED: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!("aethel_pageserver_gc_versions_removed_total", "Page versions removed by compaction/GC").unwrap()
+    register_int_counter!(
+        "aethel_pageserver_gc_versions_removed_total",
+        "Page versions removed by compaction/GC"
+    )
+    .unwrap()
 });
 
 /// Timelines (branches) currently known.
 pub static TIMELINES: Lazy<IntGauge> = Lazy::new(|| {
-    register_int_gauge!("aethel_pageserver_timelines", "Timelines (branches) currently known").unwrap()
+    register_int_gauge!("aethel_pageserver_timelines", "Timelines (branches) currently known")
+        .unwrap()
 });
