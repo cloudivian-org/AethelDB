@@ -56,14 +56,14 @@ jobs:
         run: cargo build -p proxy --features kubernetes
 
   e2e:
-    name: Python e2e (lint + import)
+    name: Python e2e (compile check)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install deps
-        run: pip install -r e2e-tests/requirements.txt
+      # Byte-compile the suite (no heavy runtime deps needed for this gate).
+      # The full suite runs locally with the built binaries: see e2e-tests/README.md.
       - name: Byte-compile the suite
         run: python -m compileall e2e-tests

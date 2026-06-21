@@ -22,12 +22,15 @@ with an explanatory message.
 """
 from __future__ import annotations
 
+import json
 import os
 import signal
 import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -84,6 +87,22 @@ def connect_through_proxy(proxy_port: int) -> socket.socket:
     return sock
 
 
+ZERO_TL = "00" * 16  # TimelineId::ZERO (the root)
+
+
+def http(method: str, port: int, path: str, body: dict | None = None):
+    """Issue an HTTP request to a control/metrics endpoint; return (status, text)."""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data, method=method)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+
+
 def command(sock: socket.socket, line: str) -> str:
     sock.sendall(line.encode() + b"\n")
     buf = b""
@@ -107,6 +126,12 @@ class Stack:
         self.sk_port = free_port()
         self.ps_port = free_port()
         self.ps_ingest_port = free_port()
+        # Control / HTTP / metrics endpoints (ephemeral to avoid fixed-port clashes).
+        self.ps_control_port = free_port()
+        self.ps_http_port = free_port()
+        self.ps_metrics_port = free_port()
+        self.sk_metrics_port = free_port()
+        self.proxy_metrics_port = free_port()
 
     def _spawn(self, name: str, argv: list[str]) -> subprocess.Popen:
         log = open(self.tmp / f"{name}.log", "w")
@@ -119,15 +144,20 @@ class Stack:
         self._spawn("safekeeper", [
             SAFEKEEPER, "--listen", f"127.0.0.1:{self.sk_port}",
             "--data-dir", self.tmp / "sk", "--node-id", "1",
+            "--metrics-listen", f"127.0.0.1:{self.sk_metrics_port}",
         ])
         self._spawn("pageserver", [
             PAGESERVER, "--listen", f"127.0.0.1:{self.ps_port}",
             "--ingest-listen", f"127.0.0.1:{self.ps_ingest_port}",
             "--object-dir", self.tmp / "obj", "--offload-tick-secs", "1",
+            "--control-listen", f"127.0.0.1:{self.ps_control_port}",
+            "--http-listen", f"127.0.0.1:{self.ps_http_port}",
+            "--metrics-listen", f"127.0.0.1:{self.ps_metrics_port}",
         ])
         wait_port(self.sk_port)
         wait_port(self.ps_port)
         wait_port(self.ps_ingest_port)
+        wait_port(self.ps_http_port)
 
         # Activation scripts the proxy runs to start/stop the mock compute.
         start_sh = self.tmp / "start.sh"
@@ -158,6 +188,7 @@ class Stack:
             "--wake-budget-ms", "8000",
             "--idle-secs", str(IDLE_SECS),
             "--reap-tick-secs", str(REAP_TICK_SECS),
+            "--metrics-listen", f"127.0.0.1:{self.proxy_metrics_port}",
         ])
         wait_port(self.proxy_port)
 
@@ -254,3 +285,49 @@ def test_data_survives_scale_to_zero(stack: Stack):
         sock.close()
     assert reply == "VALUE durable-value", reply
     assert compute_running(stack.backend_port), "the read should have re-woken compute"
+
+
+def test_http_control_plane_api(stack: Stack):
+    """The HTTP/JSON control plane creates timelines, branches, lists, and GCs."""
+    # Health.
+    status, text = http("GET", stack.ps_http_port, "/healthz")
+    assert status == 200 and "ok" in text
+
+    dev = "0a" * 16
+    # Create a root timeline, then branch it.
+    status, text = http("POST", stack.ps_http_port, "/v1/timelines", {"id": dev})
+    assert status == 201, text
+
+    branch = "0b" * 16
+    status, text = http(
+        "POST", stack.ps_http_port, "/v1/branches",
+        {"timeline": branch, "parent": ZERO_TL, "lsn": 1},
+    )
+    assert status == 201, text
+
+    # List shows the root, the new timeline, and the branch.
+    status, text = http("GET", stack.ps_http_port, "/v1/timelines")
+    assert status == 200
+    listed = json.loads(text)["timelines"]
+    assert ZERO_TL in listed and dev in listed and branch in listed
+
+    # GC runs and reports stats.
+    status, text = http("POST", stack.ps_http_port, "/v1/gc", {"horizon_lsn": 1})
+    assert status == 200, text
+    assert "versions_removed" in json.loads(text)
+
+
+def test_prometheus_metrics_exposed(stack: Stack):
+    """Each service exposes Prometheus metrics reflecting the work done above."""
+    status, text = http("GET", stack.ps_metrics_port, "/metrics")
+    assert status == 200
+    # The earlier GetPage incremented this counter; the control-plane test created
+    # timelines (the gauge is exported once touched).
+    assert "aethel_pageserver_get_page_total" in text
+    assert "aethel_pageserver_timelines" in text
+
+    status, sk = http("GET", stack.sk_metrics_port, "/metrics")
+    assert status == 200 and "aethel_safekeeper_appends_total" in sk
+
+    status, px = http("GET", stack.proxy_metrics_port, "/metrics")
+    assert status == 200 and "aethel_proxy_connections_total" in px

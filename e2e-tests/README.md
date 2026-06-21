@@ -11,7 +11,9 @@ patched PostgreSQL engine. It validates all four required behaviours:
 1. a query while compute is scaled to zero cold-starts it via the proxy;
 2. an INSERT streams WAL to the safekeeper (quorum-committed);
 3. the page server materializes the resulting block;
-4. data survives an idle scale-to-zero and is read back after re-activation.
+4. data survives an idle scale-to-zero and is read back after re-activation;
+5. the HTTP control-plane API creates timelines, branches, lists, and GCs;
+6. every service exposes Prometheus metrics reflecting the work done.
 
 Run it (after `cargo build`):
 
