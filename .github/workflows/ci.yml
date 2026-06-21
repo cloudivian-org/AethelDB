@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, "1.75"] # latest stable + the pinned MSRV
+        toolchain: [stable, "1.82"] # latest stable + the declared MSRV
     steps:
       - uses: actions/checkout@v4
 

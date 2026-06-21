@@ -21,14 +21,14 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.82"
 license = "Apache-2.0"
 authors = ["The AethelDB Authors"]
 repository = "https://github.com/cloudivian-org/AethelDB"
 description = "Decoupled, serverless PostgreSQL: separated compute and page storage."
 
 # Single source of truth for third-party crate versions. Pinned conservatively
-# so the tree builds on the project's MSRV (Rust 1.75).
+# so the tree builds on the project's MSRV (Rust 1.82).
 [workspace.dependencies]
 # Async runtime + networking. "full" pulls in net, time, sync, macros, rt-multi-thread.
 tokio = { version = "1.36", features = ["full"] }
