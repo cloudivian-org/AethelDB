@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# OPTIONAL connection-pooling tier: PgBouncer in front of a tenant's compute.
+#
+#     client -> aethel-proxy (wake/route/TLS) -> pgbouncer (pooling) -> compute (PG)
+#
+# This is NOT part of the default kustomization — apply it only when you want
+# pooling, and point the proxy's tenant target (or the compute's clients) at the
+# `pgbouncer` Service instead of compute directly. See docs/design/proxy-tls.md.
+#
+#   kubectl apply -f deploy/k8s/pgbouncer.yaml
+#
+# Transaction pooling lets many short-lived client connections share a small set
+# of server connections — exactly what a serverless, scale-to-zero compute wants.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: aetheldb
+  labels:
+    app: pgbouncer
+    app.kubernetes.io/part-of: aetheldb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70 # the edoburu image's "postgres" user
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:latest
+          env:
+            # Upstream Postgres/compute to pool to. Point this at the tenant's
+            # compute Service (or a managed Postgres).
+            - { name: DB_HOST, value: "compute" }
+            - { name: DB_PORT, value: "5432" }
+            - { name: DB_NAME, value: "mydb" }
+            - { name: DB_USER, value: "postgres" }
+            - { name: LISTEN_PORT, value: "6432" }
+            - { name: POOL_MODE, value: "transaction" }
+            - { name: MAX_CLIENT_CONN, value: "1000" }
+            - { name: DEFAULT_POOL_SIZE, value: "25" }
+            - { name: IGNORE_STARTUP_PARAMETERS, value: "extra_float_digits,options" }
+            # DEV ONLY: `trust` skips client password checks — acceptable only on a
+            # locked-down in-cluster network. In production set AUTH_TYPE to
+            # scram-sha-256 and supply a userlist / auth_query. See
+            # deploy/README.md "Security hardening".
+            - { name: AUTH_TYPE, value: "trust" }
+          ports:
+            - { containerPort: 6432, name: pgbouncer }
+          readinessProbe:
+            tcpSocket:
+              port: 6432
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: aetheldb
+  labels:
+    app: pgbouncer
+spec:
+  selector:
+    app: pgbouncer
+  ports:
+    - port: 6432
+      targetPort: 6432
+      name: pgbouncer
