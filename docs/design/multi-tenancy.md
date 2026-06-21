@@ -59,10 +59,18 @@ Both control planes are tenant-aware, defaulting to the root tenant
 The default tenant and its root timeline are pre-provisioned at startup, so the
 single-tenant path (and the legacy ingest endpoint) works out of the box.
 
+## Durability
+
+The tenant/timeline **topology** (which tenants exist, each timeline, and each
+branch's ancestry) is persisted to the object store as a single small JSON
+catalog (`catalog.rs`, `catalog/topology.json`), rewritten after each
+create/branch and reloaded at startup — so the shape of the world survives a
+restart rather than being reconstructed only as ids are referenced. Page *data*
+already lives durably as immutable layers; rehydrating a timeline's pages from
+those layers on restart is the complementary step, tracked separately.
+
 ## What this is not (yet)
 
-This is data-plane isolation and routing. Still ahead on the operational layer:
-per-tenant resource limits/quotas, authn/authz on the control plane (today it is
-unauthenticated — keep it internal, see `deploy/README.md`), per-tenant object-
-store prefixes, and a durable tenant/timeline catalog so the topology survives a
-restart (today tenants are reconstructed as they are referenced).
+Still ahead on the operational layer: per-tenant resource limits/quotas, per-
+tenant object-store prefixes, and authn/authz on the control plane — today it is
+unauthenticated, so keep it internal (see `deploy/README.md`).

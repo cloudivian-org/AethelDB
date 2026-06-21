@@ -95,6 +95,11 @@ async fn handle_conn(
             Some("receive") => receive_command(&tenant, tenant_id, &line).await,
             _ => exec(&tenant, &line),
         };
+        // Persist the topology after a successful create/branch/tenant op.
+        let token = line.split_whitespace().next().unwrap_or("");
+        if matches!(token, "create" | "branch" | "tenant") && reply.starts_with("ok") {
+            tenants.persist().await;
+        }
         debug!(%line, %reply, "control command");
         write_half.write_all(reply.as_bytes()).await?;
         write_half.write_all(b"\n").await?;

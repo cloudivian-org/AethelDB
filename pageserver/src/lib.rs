@@ -20,6 +20,7 @@
 //! * [`walreceiver`] — streams committed WAL from a safekeeper into the store
 //!   (Phase 4), closing the safekeeper→page-server link.
 
+pub mod catalog;
 pub mod control;
 pub mod httpapi;
 pub mod layer;

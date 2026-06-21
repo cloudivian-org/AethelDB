@@ -77,6 +77,10 @@ async fn handle(
     // Split an optional `?query` off the path.
     let (path, query) = raw_path.split_once('?').unwrap_or((raw_path.as_str(), ""));
     let (status, json) = route(&tenants, store.as_ref(), &method, path, query, &body).await;
+    // A 201 means a tenant/timeline/branch was created — persist the topology.
+    if status == 201 {
+        tenants.persist().await;
+    }
     let reason = if (200..300).contains(&status) { "OK" } else { "Error" };
     let response = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json}",
