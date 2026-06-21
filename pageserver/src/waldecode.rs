@@ -71,7 +71,8 @@ const BKPIMAGE_APPLY: u8 = 0x02;
 const BKPIMAGE_COMPRESS_PGLZ: u8 = 0x04;
 const BKPIMAGE_COMPRESS_LZ4: u8 = 0x08;
 const BKPIMAGE_COMPRESS_ZSTD: u8 = 0x10;
-const BKPIMAGE_COMPRESSED: u8 = BKPIMAGE_COMPRESS_PGLZ | BKPIMAGE_COMPRESS_LZ4 | BKPIMAGE_COMPRESS_ZSTD;
+const BKPIMAGE_COMPRESSED: u8 =
+    BKPIMAGE_COMPRESS_PGLZ | BKPIMAGE_COMPRESS_LZ4 | BKPIMAGE_COMPRESS_ZSTD;
 
 /// Errors produced while framing or decoding WAL.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -155,7 +156,10 @@ impl DecodedImage {
         let hl = self.hole_length as usize;
         if hl == 0 {
             if self.bytes.len() != XLOG_BLCKSZ {
-                return Err(WalDecodeError::BadImageSize { got: self.bytes.len(), want: XLOG_BLCKSZ });
+                return Err(WalDecodeError::BadImageSize {
+                    got: self.bytes.len(),
+                    want: XLOG_BLCKSZ,
+                });
             }
             page.copy_from_slice(&self.bytes);
         } else {
@@ -374,7 +378,8 @@ pub fn decode_wal_record(lsn: Lsn, record: &[u8]) -> Result<DecodedWalRecord, Wa
                 };
                 let blkno = c.u32("blkno")?;
 
-                let fork = ForkNumber::from_raw(fork_raw).ok_or(WalDecodeError::BadFork(fork_raw))?;
+                let fork =
+                    ForkNumber::from_raw(fork_raw).ok_or(WalDecodeError::BadFork(fork_raw))?;
                 blocks.push(BlockWork {
                     rel: RelTag { spc_node: spc, db_node: db, rel_node: relnode, fork },
                     blkno,
@@ -405,7 +410,13 @@ pub fn decode_wal_record(lsn: Lsn, record: &[u8]) -> Result<DecodedWalRecord, Wa
             None => None,
         };
         let data = if b.has_data { c.take(b.data_len, "block data")?.to_vec() } else { Vec::new() };
-        decoded_blocks.push(DecodedBlock { rel: b.rel, blkno: b.blkno, will_init: b.will_init, image, data });
+        decoded_blocks.push(DecodedBlock {
+            rel: b.rel,
+            blkno: b.blkno,
+            will_init: b.will_init,
+            image,
+            data,
+        });
     }
     let main_data = c.take(main_data_len, "main data")?.to_vec();
 
@@ -566,7 +577,8 @@ impl WalStreamDecoder {
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let xl_tot_len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]);
+            let xl_tot_len =
+                u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]);
 
             // A zero (or sub-header) length marks the end of valid WAL on this
             // page: the rest is zero padding. Skip to the next page boundary.
@@ -615,7 +627,13 @@ mod tests {
     }
 
     /// A block header with no image and no data (just a rel + blkno reference).
-    fn block_ref(block_id: u8, fork: u8, rel: (u32, u32, u32), blkno: u32, same_rel: bool) -> Vec<u8> {
+    fn block_ref(
+        block_id: u8,
+        fork: u8,
+        rel: (u32, u32, u32),
+        blkno: u32,
+        same_rel: bool,
+    ) -> Vec<u8> {
         let mut b = Vec::new();
         b.push(block_id);
         let mut fork_flags = fork & BKPBLOCK_FORK_MASK;
@@ -659,7 +677,10 @@ mod tests {
         assert_eq!(d.main_data, vec![0xAA, 0xBB, 0xCC]);
         assert_eq!(d.blocks.len(), 1);
         let b = &d.blocks[0];
-        assert_eq!(b.rel, RelTag { spc_node: 1663, db_node: 5, rel_node: 16384, fork: ForkNumber::Main });
+        assert_eq!(
+            b.rel,
+            RelTag { spc_node: 1663, db_node: 5, rel_node: 16384, fork: ForkNumber::Main }
+        );
         assert_eq!(b.blkno, 42);
         assert!(b.image.is_none());
         assert!(b.data.is_empty());
@@ -705,11 +726,11 @@ mod tests {
         let fork_flags = (ForkNumber::Main as u8) | BKPBLOCK_HAS_IMAGE;
         body.push(fork_flags);
         body.extend_from_slice(&0u16.to_le_bytes()); // data_len = 0
-        // XLogRecordBlockImageHeader
+                                                     // XLogRecordBlockImageHeader
         body.extend_from_slice(&(stored_len as u16).to_le_bytes()); // bimg_len
         body.extend_from_slice(&(hole_offset as u16).to_le_bytes()); // hole_offset
         body.push(BKPIMAGE_HAS_HOLE | BKPIMAGE_APPLY); // bimg_info, uncompressed
-        // RelFileLocator + blkno
+                                                       // RelFileLocator + blkno
         body.extend_from_slice(&1663u32.to_le_bytes());
         body.extend_from_slice(&5u32.to_le_bytes());
         body.extend_from_slice(&16384u32.to_le_bytes());
@@ -784,7 +805,7 @@ mod tests {
         // Page starts at LSN 0 with a long header; put two records after it.
         let mut long_hdr = short_page_header(0, false, 0);
         long_hdr.resize(SIZE_OF_XLOG_LONG_PHD, 0); // promote to long header size
-        // Mark the long-header flag.
+                                                   // Mark the long-header flag.
         let info = XLP_LONG_HEADER;
         long_hdr[2..4].copy_from_slice(&info.to_le_bytes());
 

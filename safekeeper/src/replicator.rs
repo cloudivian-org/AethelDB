@@ -96,10 +96,10 @@ impl NetworkReplicator {
         addr: SocketAddr,
         bytes: &[u8],
     ) -> anyhow::Result<Lsn> {
-        if !conns.contains_key(&node) {
+        if let std::collections::hash_map::Entry::Vacant(e) = conns.entry(node) {
             let stream = TcpStream::connect(addr).await?;
             let _ = stream.set_nodelay(true);
-            conns.insert(node, stream);
+            e.insert(stream);
         }
         let stream = conns.get_mut(&node).expect("just inserted");
         stream.write_all(bytes).await?;

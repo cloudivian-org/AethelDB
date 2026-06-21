@@ -29,10 +29,10 @@ fn ensure_crypto_provider() {
 
 /// Build a [`TlsAcceptor`] from PEM certificate-chain and private-key files.
 pub fn acceptor_from_pem(cert_path: &Path, key_path: &Path) -> anyhow::Result<TlsAcceptor> {
-    let cert_pem =
-        std::fs::read(cert_path).with_context(|| format!("reading TLS cert {}", cert_path.display()))?;
-    let key_pem =
-        std::fs::read(key_path).with_context(|| format!("reading TLS key {}", key_path.display()))?;
+    let cert_pem = std::fs::read(cert_path)
+        .with_context(|| format!("reading TLS cert {}", cert_path.display()))?;
+    let key_pem = std::fs::read(key_path)
+        .with_context(|| format!("reading TLS key {}", key_path.display()))?;
     acceptor_from_pem_bytes(&cert_pem, &key_pem)
 }
 

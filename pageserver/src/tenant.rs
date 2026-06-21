@@ -44,11 +44,7 @@ impl Tenant {
     /// Create an empty tenant with an explicit WAL-redo backend (e.g. a
     /// Postgres wal-redo process), shared by every timeline's store.
     pub fn with_redo(freeze_threshold: usize, redo: Arc<dyn WalRedoManager>) -> Arc<Self> {
-        Arc::new(Tenant {
-            timelines: Mutex::new(HashMap::new()),
-            freeze_threshold,
-            redo,
-        })
+        Arc::new(Tenant { timelines: Mutex::new(HashMap::new()), freeze_threshold, redo })
     }
 
     fn new_repo(&self) -> Arc<Repository> {
@@ -81,7 +77,8 @@ impl Tenant {
         if timelines.contains_key(&new_id) {
             return Err(TenantError::AlreadyExists(new_id));
         }
-        let parent = timelines.get(&parent_id).cloned().ok_or(TenantError::NoSuchParent(parent_id))?;
+        let parent =
+            timelines.get(&parent_id).cloned().ok_or(TenantError::NoSuchParent(parent_id))?;
         let tl = Timeline::branched(new_id, self.new_repo(), parent, ancestor_lsn);
         timelines.insert(new_id, tl.clone());
         crate::metrics::TIMELINES.set(timelines.len() as i64);
@@ -147,7 +144,12 @@ mod tests {
         TimelineId::from_bytes([n; 16])
     }
     fn image(byte: u8, lsn: u64, block: u32) -> Modification {
-        Modification { rel: rel(), block, lsn: Lsn(lsn), version: PageVersion::Image(vec![byte; PAGE_SIZE]) }
+        Modification {
+            rel: rel(),
+            block,
+            lsn: Lsn(lsn),
+            version: PageVersion::Image(vec![byte; PAGE_SIZE]),
+        }
     }
     fn delta(offset: u16, byte: u8, lsn: u64, block: u32) -> Modification {
         Modification {
@@ -270,7 +272,12 @@ mod tests {
     fn gc_collapses_main_line_history_without_branches() {
         let tenant = Tenant::new(1); // freeze each write
         let main = tenant.create_timeline(tl(1)).unwrap();
-        main.ingest([image(7, 10, 0), delta(0, 0xAA, 20, 0), image(1, 30, 0), delta(0, 0xBB, 40, 0)]);
+        main.ingest([
+            image(7, 10, 0),
+            delta(0, 0xAA, 20, 0),
+            image(1, 30, 0),
+            delta(0, 0xBB, 40, 0),
+        ]);
 
         let stats = tenant.gc(Lsn(35));
         let removed: usize = stats.iter().map(|(_, s)| s.versions_removed).sum();
@@ -283,7 +290,12 @@ mod tests {
         let tenant = Tenant::new(1);
         let main = tenant.create_timeline(tl(1)).unwrap();
         // base@10 (all 7s), delta@20, a newer full image@30, delta@40.
-        main.ingest([image(7, 10, 0), delta(1, 0x11, 20, 0), image(9, 30, 0), delta(0, 0xBB, 40, 0)]);
+        main.ingest([
+            image(7, 10, 0),
+            delta(1, 0x11, 20, 0),
+            image(9, 30, 0),
+            delta(0, 0xBB, 40, 0),
+        ]);
         // Branch at LSN 15 — between base@10 and delta@20. The branch reads main@15.
         let branch = tenant.branch_timeline(tl(2), tl(1), Lsn(15)).unwrap();
 

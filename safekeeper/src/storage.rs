@@ -134,7 +134,14 @@ impl WalStorage {
         if !matches {
             let path = self.segment_path(index);
             let existed = path.exists();
-            let f = OpenOptions::new().create(true).read(true).write(true).open(&path)?;
+            // Open (create if absent) for read+write; never truncate — existing
+            // segments hold durable WAL we must keep.
+            let f = OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .truncate(false)
+                .open(&path)?;
             if !existed {
                 // Preallocate the segment so writes never fail mid-stream.
                 f.set_len(self.cfg.segment_size)?;
@@ -399,7 +406,7 @@ mod tests {
     fn recycles_old_segments() {
         let dir = TempDir::new("recycle");
         let mut wal = WalStorage::open(cfg(&dir, 8, 64)).unwrap();
-        wal.append(Lsn(0), &vec![1u8; 40]).unwrap(); // 5 segments
+        wal.append(Lsn(0), &[1u8; 40]).unwrap(); // 5 segments
         wal.flush().unwrap();
         let removed = wal.remove_segments_before(Lsn(24)).unwrap(); // segments 0,1,2
         assert_eq!(removed, 3);

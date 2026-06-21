@@ -220,22 +220,13 @@ impl Repository {
     /// Number of blocks in a relation fork as of `lsn`, if known.
     pub fn get_rel_size(&self, rel: RelTag, lsn: Lsn) -> Option<u32> {
         let inner = self.inner.lock().unwrap();
-        inner
-            .rel_sizes
-            .range((rel, Lsn::INVALID)..=(rel, lsn))
-            .next_back()
-            .map(|(_, &n)| n)
+        inner.rel_sizes.range((rel, Lsn::INVALID)..=(rel, lsn)).next_back().map(|(_, &n)| n)
     }
 
     /// Snapshot of frozen layers not yet uploaded to object storage.
     pub fn pending_offload(&self) -> Vec<Arc<Layer>> {
         let inner = self.inner.lock().unwrap();
-        inner
-            .layers
-            .iter()
-            .filter(|l| !inner.uploaded.contains(&l.id()))
-            .cloned()
-            .collect()
+        inner.layers.iter().filter(|l| !inner.uploaded.contains(&l.id())).cloned().collect()
     }
 
     /// Mark a layer as durably offloaded.
@@ -322,7 +313,9 @@ fn modifications_from_record(decoded: &DecodedWalRecord, raw: &[u8]) -> Vec<Modi
         let version = match &b.image {
             Some(img) => match img.restore() {
                 Ok(page) => PageVersion::Image(page),
-                Err(_) => PageVersion::WalRecord(WalRecord { will_init: b.will_init, rec: raw.to_vec() }),
+                Err(_) => {
+                    PageVersion::WalRecord(WalRecord { will_init: b.will_init, rec: raw.to_vec() })
+                }
             },
             None => PageVersion::WalRecord(WalRecord { will_init: b.will_init, rec: raw.to_vec() }),
         };
@@ -345,7 +338,12 @@ mod tests {
     }
 
     fn base_image(byte: u8) -> Modification {
-        Modification { rel: rel(), block: 0, lsn: Lsn(10), version: PageVersion::Image(vec![byte; PAGE_SIZE]) }
+        Modification {
+            rel: rel(),
+            block: 0,
+            lsn: Lsn(10),
+            version: PageVersion::Image(vec![byte; PAGE_SIZE]),
+        }
     }
 
     #[test]
@@ -425,8 +423,18 @@ mod tests {
     fn rel_size_tracks_highest_block_over_lsn() {
         let repo = Repository::new(1_000);
         repo.ingest([
-            Modification { rel: rel(), block: 0, lsn: Lsn(10), version: PageVersion::Image(vec![0; PAGE_SIZE]) },
-            Modification { rel: rel(), block: 4, lsn: Lsn(20), version: PageVersion::Image(vec![0; PAGE_SIZE]) },
+            Modification {
+                rel: rel(),
+                block: 0,
+                lsn: Lsn(10),
+                version: PageVersion::Image(vec![0; PAGE_SIZE]),
+            },
+            Modification {
+                rel: rel(),
+                block: 4,
+                lsn: Lsn(20),
+                version: PageVersion::Image(vec![0; PAGE_SIZE]),
+            },
         ]);
         assert_eq!(repo.get_rel_size(rel(), Lsn(10)), Some(1));
         assert_eq!(repo.get_rel_size(rel(), Lsn(20)), Some(5));
@@ -437,8 +445,18 @@ mod tests {
     fn memtable_freezes_at_threshold() {
         let repo = Repository::new(2);
         repo.ingest([
-            Modification { rel: rel(), block: 0, lsn: Lsn(10), version: PageVersion::Image(vec![0; PAGE_SIZE]) },
-            Modification { rel: rel(), block: 1, lsn: Lsn(11), version: PageVersion::Image(vec![0; PAGE_SIZE]) },
+            Modification {
+                rel: rel(),
+                block: 0,
+                lsn: Lsn(10),
+                version: PageVersion::Image(vec![0; PAGE_SIZE]),
+            },
+            Modification {
+                rel: rel(),
+                block: 1,
+                lsn: Lsn(11),
+                version: PageVersion::Image(vec![0; PAGE_SIZE]),
+            },
         ]);
         // Two versions reached the threshold of 2 -> one frozen layer.
         assert_eq!(repo.layer_count(), 1);

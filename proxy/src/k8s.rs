@@ -41,7 +41,11 @@ impl KubeActivator {
         name_template: impl Into<String>,
     ) -> anyhow::Result<Self> {
         let client = Client::try_default().await?;
-        Ok(KubeActivator { client, namespace: namespace.into(), name_template: name_template.into() })
+        Ok(KubeActivator {
+            client,
+            namespace: namespace.into(),
+            name_template: name_template.into(),
+        })
     }
 
     /// Build against an explicit cluster config (used by tests pointing at a
@@ -52,7 +56,11 @@ impl KubeActivator {
         name_template: impl Into<String>,
     ) -> anyhow::Result<Self> {
         let client = Client::try_from(config)?;
-        Ok(KubeActivator { client, namespace: namespace.into(), name_template: name_template.into() })
+        Ok(KubeActivator {
+            client,
+            namespace: namespace.into(),
+            name_template: name_template.into(),
+        })
     }
 
     async fn scale(&self, tenant: &str, replicas: i32) -> anyhow::Result<()> {
@@ -178,16 +186,23 @@ mod tests {
         }
         let ns = "aetheldb";
         let activator = KubeActivator::try_default(ns, "compute-{tenant}").await.unwrap();
-        let api: Api<Deployment> =
-            Api::namespaced(Client::try_default().await.unwrap(), ns);
+        let api: Api<Deployment> = Api::namespaced(Client::try_default().await.unwrap(), ns);
 
         let replicas = |d: &Deployment| d.spec.as_ref().and_then(|s| s.replicas);
 
         activator.start("shop").await.expect("start should scale up");
-        assert_eq!(replicas(&api.get("compute-shop").await.unwrap()), Some(1), "started -> 1 replica");
+        assert_eq!(
+            replicas(&api.get("compute-shop").await.unwrap()),
+            Some(1),
+            "started -> 1 replica"
+        );
 
         activator.stop("shop").await.expect("stop should scale down");
-        assert_eq!(replicas(&api.get("compute-shop").await.unwrap()), Some(0), "stopped -> 0 replicas");
+        assert_eq!(
+            replicas(&api.get("compute-shop").await.unwrap()),
+            Some(0),
+            "stopped -> 0 replicas"
+        );
     }
 
     #[tokio::test]
@@ -203,7 +218,12 @@ mod tests {
         let reqs = captured.lock().unwrap().clone();
         let patch = reqs
             .iter()
-            .find(|(m, p, _)| m == "PATCH" && p.contains("/apis/apps/v1/namespaces/aetheldb/deployments/compute-shop/scale"))
+            .find(|(m, p, _)| {
+                m == "PATCH"
+                    && p.contains(
+                        "/apis/apps/v1/namespaces/aetheldb/deployments/compute-shop/scale",
+                    )
+            })
             .unwrap_or_else(|| panic!("no scale PATCH; saw: {reqs:?}"));
         assert!(patch.2.contains("\"replicas\":1"), "body scales to 1: {}", patch.2);
     }

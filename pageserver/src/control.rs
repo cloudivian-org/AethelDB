@@ -77,7 +77,11 @@ async fn handle_conn(
 
 /// Run a branch-aware GC and, if an object store is configured, delete the
 /// compacted-away layer files from it.
-async fn gc_command(tenant: &Arc<Tenant>, store: Option<&Arc<dyn ObjectStore>>, line: &str) -> String {
+async fn gc_command(
+    tenant: &Arc<Tenant>,
+    store: Option<&Arc<dyn ObjectStore>>,
+    line: &str,
+) -> String {
     let horizon = match line.split_whitespace().nth(1).and_then(|s| s.parse::<u64>().ok()) {
         Some(h) => h,
         None => return "err usage: gc <horizon-lsn>".to_string(),
@@ -112,7 +116,10 @@ async fn receive_command(tenant: &Arc<Tenant>, line: &str) -> String {
     let start_lsn = parts.next().and_then(|s| s.parse::<u64>().ok());
     let (timeline, addr, start_lsn) = match (timeline, addr, start_lsn) {
         (Some(t), Some(a), Some(l)) => (t, a, l),
-        _ => return "err usage: receive <timeline-hex> <safekeeper-host:port> <start-lsn>".to_string(),
+        _ => {
+            return "err usage: receive <timeline-hex> <safekeeper-host:port> <start-lsn>"
+                .to_string()
+        }
     };
 
     let Some(tl) = tenant.get_timeline(timeline) else {
@@ -156,7 +163,8 @@ fn exec(tenant: &Arc<Tenant>, line: &str) -> String {
             }
         }
         Some("list") => {
-            let mut ids: Vec<String> = tenant.timeline_ids().iter().map(|i| i.to_string()).collect();
+            let mut ids: Vec<String> =
+                tenant.timeline_ids().iter().map(|i| i.to_string()).collect();
             ids.sort();
             format!("ok {}", ids.join(" "))
         }

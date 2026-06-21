@@ -56,9 +56,7 @@ impl Layer {
 
     /// Iterate the versions of `key` with LSN in `[0, lsn]`, ascending.
     pub fn range(&self, key: PageKey, lsn: Lsn) -> impl Iterator<Item = (Lsn, &PageVersion)> {
-        self.entries
-            .range((key, Lsn::INVALID)..=(key, lsn))
-            .map(|((_, l), v)| (*l, v))
+        self.entries.range((key, Lsn::INVALID)..=(key, lsn)).map(|((_, l), v)| (*l, v))
     }
 
     /// Serialize the whole layer to a single byte buffer (the offload format).

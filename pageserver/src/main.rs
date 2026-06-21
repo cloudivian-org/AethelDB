@@ -95,32 +95,30 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
     let args = Args::parse();
 
-    let store: Arc<dyn ObjectStore> = match (&args.s3_endpoint, &args.s3_bucket) {
-        (Some(endpoint), Some(bucket)) => {
-            info!(%endpoint, %bucket, "offloading layers to S3");
-            Arc::new(
-                pageserver::objstore::S3ObjectStore::new(
-                    endpoint,
-                    bucket,
-                    &args.s3_region,
-                    &args.s3_access_key,
-                    &args.s3_secret_key,
+    let store: Arc<dyn ObjectStore> =
+        match (&args.s3_endpoint, &args.s3_bucket) {
+            (Some(endpoint), Some(bucket)) => {
+                info!(%endpoint, %bucket, "offloading layers to S3");
+                Arc::new(
+                    pageserver::objstore::S3ObjectStore::new(
+                        endpoint,
+                        bucket,
+                        &args.s3_region,
+                        &args.s3_access_key,
+                        &args.s3_secret_key,
+                    )
+                    .context("connecting to S3 object store")?,
                 )
-                .context("connecting to S3 object store")?,
-            )
-        }
-        _ => Arc::new(
-            LocalObjectStore::new(&args.object_dir)
-                .with_context(|| format!("opening object store at {}", args.object_dir.display()))?,
-        ),
-    };
+            }
+            _ => Arc::new(LocalObjectStore::new(&args.object_dir).with_context(|| {
+                format!("opening object store at {}", args.object_dir.display())
+            })?),
+        };
 
     // One tenant with a root timeline (`TimelineId::ZERO`); branches are created
     // at runtime via the control endpoint.
     let tenant = Tenant::new(args.freeze_threshold);
-    let root = tenant
-        .create_timeline(TimelineId::ZERO)
-        .context("creating root timeline")?;
+    let root = tenant.create_timeline(TimelineId::ZERO).context("creating root timeline")?;
 
     info!(
         listen = %args.listen,
@@ -138,7 +136,11 @@ async fn main() -> anyhow::Result<()> {
     info!(addr = %args.metrics_listen, "serving Prometheus metrics");
 
     // Background layer offload (across every timeline of the tenant).
-    tokio::spawn(offload::run(tenant.clone(), store.clone(), Duration::from_secs(args.offload_tick_secs)));
+    tokio::spawn(offload::run(
+        tenant.clone(),
+        store.clone(),
+        Duration::from_secs(args.offload_tick_secs),
+    ));
 
     // Ingest endpoint (legacy push path) targets the root timeline.
     let ingest_listener = TcpListener::bind(args.ingest_listen)
@@ -164,7 +166,12 @@ async fn main() -> anyhow::Result<()> {
     // Optional: pull committed WAL directly from a safekeeper (Phase 4) into the
     // root timeline. Per-branch receivers will follow with the control plane.
     if let Some(sk_addr) = args.safekeeper {
-        let cfg = WalReceiverConfig::new(sk_addr, TenantId::ZERO, TimelineId::ZERO, Lsn(args.wal_start_lsn));
+        let cfg = WalReceiverConfig::new(
+            sk_addr,
+            TenantId::ZERO,
+            TimelineId::ZERO,
+            Lsn(args.wal_start_lsn),
+        );
         let timeline_for_wal = root.clone();
         tokio::spawn(async move {
             match WalReceiver::connect(timeline_for_wal, cfg).await {

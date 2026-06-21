@@ -47,7 +47,12 @@ pub struct WalReceiverConfig {
 
 impl WalReceiverConfig {
     /// Config with sensible defaults: 1 MiB chunks, 100 ms idle poll.
-    pub fn new(safekeeper_addr: SocketAddr, tenant: TenantId, timeline: TimelineId, start_lsn: Lsn) -> Self {
+    pub fn new(
+        safekeeper_addr: SocketAddr,
+        tenant: TenantId,
+        timeline: TimelineId,
+        start_lsn: Lsn,
+    ) -> Self {
         WalReceiverConfig {
             safekeeper_addr,
             tenant,

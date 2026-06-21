@@ -82,7 +82,12 @@ async fn ingest_then_getpage_reconstructs_history() {
         let mut isock = TcpStream::connect(ingest_addr).await.unwrap();
         ingest(
             &mut isock,
-            &Modification { rel: rel(), block: 0, lsn: Lsn(10), version: PageVersion::Image(vec![0u8; PAGE_SIZE]) },
+            &Modification {
+                rel: rel(),
+                block: 0,
+                lsn: Lsn(10),
+                version: PageVersion::Image(vec![0u8; PAGE_SIZE]),
+            },
         )
         .await;
         ingest(

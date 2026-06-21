@@ -73,18 +73,22 @@ async fn spawn_echo_backend() -> SocketAddr {
 #[tokio::test]
 async fn terminates_tls_and_splices_to_backend() {
     let backend = spawn_echo_backend().await;
-    let registry = Arc::new(Registry::from_iter([(
-        "echo".to_string(),
-        TenantState::new(backend, true),
-    )]));
+    let registry =
+        Arc::new(Registry::from_iter([("echo".to_string(), TenantState::new(backend, true))]));
 
     // A self-signed cert for "localhost".
     let ck = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
     let cert_pem = ck.cert.pem();
     let key_pem = ck.key_pair.serialize_pem();
-    let acceptor = proxy::tls::acceptor_from_pem_bytes(cert_pem.as_bytes(), key_pem.as_bytes()).unwrap();
+    let acceptor =
+        proxy::tls::acceptor_from_pem_bytes(cert_pem.as_bytes(), key_pem.as_bytes()).unwrap();
 
-    let proxy = Proxy::with_tls(registry, Arc::new(proxy::activator::NoopActivator), HealthConfig::default(), acceptor);
+    let proxy = Proxy::with_tls(
+        registry,
+        Arc::new(proxy::activator::NoopActivator),
+        HealthConfig::default(),
+        acceptor,
+    );
     let proxy_addr = {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -126,12 +130,11 @@ async fn terminates_tls_and_splices_to_backend() {
 #[tokio::test]
 async fn declines_tls_when_not_configured() {
     let backend = spawn_echo_backend().await;
-    let registry = Arc::new(Registry::from_iter([(
-        "echo".to_string(),
-        TenantState::new(backend, true),
-    )]));
+    let registry =
+        Arc::new(Registry::from_iter([("echo".to_string(), TenantState::new(backend, true))]));
     // No TLS configured -> the proxy must decline with 'N' and still work plaintext.
-    let proxy = Proxy::new(registry, Arc::new(proxy::activator::NoopActivator), HealthConfig::default());
+    let proxy =
+        Proxy::new(registry, Arc::new(proxy::activator::NoopActivator), HealthConfig::default());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy_addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

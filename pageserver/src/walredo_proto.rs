@@ -92,7 +92,9 @@ fn get_u64(b: &[u8], o: usize, what: &'static str) -> Result<u64, ProtoError> {
 impl RedoRequest {
     /// Encode the request to wire bytes (header + optional base + records).
     pub fn encode(&self) -> Vec<u8> {
-        let mut b = Vec::with_capacity(40 + PAGE_SIZE + self.records.iter().map(|(_, r)| r.len() + 12).sum::<usize>());
+        let mut b = Vec::with_capacity(
+            40 + PAGE_SIZE + self.records.iter().map(|(_, r)| r.len() + 12).sum::<usize>(),
+        );
         put_u32(&mut b, REQ_MAGIC);
         b.push(VERSION);
         b.push(if self.base_image.is_some() { FLAG_HAS_BASE } else { 0 });
@@ -135,7 +137,8 @@ impl RedoRequest {
 
         let mut pos = 28;
         let base_image = if flags & FLAG_HAS_BASE != 0 {
-            let img = buf.get(pos..pos + PAGE_SIZE).ok_or(ProtoError::Truncated("base image"))?.to_vec();
+            let img =
+                buf.get(pos..pos + PAGE_SIZE).ok_or(ProtoError::Truncated("base image"))?.to_vec();
             pos += PAGE_SIZE;
             Some(img)
         } else {
@@ -150,11 +153,17 @@ impl RedoRequest {
             pos += 8;
             let len = get_u32(buf, pos, "record len")? as usize;
             pos += 4;
-            let rec = buf.get(pos..pos + len).ok_or(ProtoError::Truncated("record bytes"))?.to_vec();
+            let rec =
+                buf.get(pos..pos + len).ok_or(ProtoError::Truncated("record bytes"))?.to_vec();
             pos += len;
             records.push((lsn, rec));
         }
-        Ok(RedoRequest { rel: RelTag { spc_node: spc, db_node: db, rel_node: relnode, fork }, blkno, base_image, records })
+        Ok(RedoRequest {
+            rel: RelTag { spc_node: spc, db_node: db, rel_node: relnode, fork },
+            blkno,
+            base_image,
+            records,
+        })
     }
 }
 
@@ -191,12 +200,17 @@ impl RedoResponse {
         }
         match *buf.get(5).ok_or(ProtoError::Truncated("status"))? {
             STATUS_OK => {
-                let page = buf.get(RESP_HEADER_LEN..RESP_HEADER_LEN + PAGE_SIZE).ok_or(ProtoError::Truncated("page"))?.to_vec();
+                let page = buf
+                    .get(RESP_HEADER_LEN..RESP_HEADER_LEN + PAGE_SIZE)
+                    .ok_or(ProtoError::Truncated("page"))?
+                    .to_vec();
                 Ok(RedoResponse::Page(page))
             }
             STATUS_ERR => {
                 let len = get_u32(buf, RESP_HEADER_LEN, "error len")? as usize;
-                let msg = buf.get(RESP_HEADER_LEN + 4..RESP_HEADER_LEN + 4 + len).ok_or(ProtoError::Truncated("error msg"))?;
+                let msg = buf
+                    .get(RESP_HEADER_LEN + 4..RESP_HEADER_LEN + 4 + len)
+                    .ok_or(ProtoError::Truncated("error msg"))?;
                 Ok(RedoResponse::Error(String::from_utf8_lossy(msg).into_owned()))
             }
             other => Err(ProtoError::BadStatus(other)),

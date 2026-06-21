@@ -40,7 +40,8 @@ async fn ingest(stream: &mut TcpStream, m: &Modification) {
 }
 
 async fn get_page(stream: &mut TcpStream, timeline: TimelineId, block: u32, lsn: u64) -> Response {
-    let req = Request::GetPage { tenant: TenantId::ZERO, timeline, rel: rel(), block, lsn: Lsn(lsn) };
+    let req =
+        Request::GetPage { tenant: TenantId::ZERO, timeline, rel: rel(), block, lsn: Lsn(lsn) };
     stream.write_all(&req.encode()).await.unwrap();
     let mut head = [0u8; 12];
     stream.read_exact(&mut head).await.unwrap();
@@ -77,13 +78,19 @@ async fn branch_over_the_network_is_isolated() {
         let mut isock = TcpStream::connect(ingest_addr).await.unwrap();
         ingest(
             &mut isock,
-            &Modification { rel: rel(), block: 0, lsn: Lsn(10), version: PageVersion::Image(vec![1u8; PAGE_SIZE]) },
+            &Modification {
+                rel: rel(),
+                block: 0,
+                lsn: Lsn(10),
+                version: PageVersion::Image(vec![1u8; PAGE_SIZE]),
+            },
         )
         .await;
 
         // 2. Branch off the root at LSN 20 via the control endpoint.
         let mut csock = BufReader::new(TcpStream::connect(control_addr).await.unwrap());
-        let reply = control(&mut csock, &format!("branch {branch_id} {} 20", TimelineId::ZERO)).await;
+        let reply =
+            control(&mut csock, &format!("branch {branch_id} {} 20", TimelineId::ZERO)).await;
         assert!(reply.starts_with("ok branched"), "branch reply: {reply}");
         let listed = control(&mut csock, "list").await;
         assert!(listed.contains(&branch_id.to_string()));

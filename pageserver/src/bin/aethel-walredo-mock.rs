@@ -105,5 +105,7 @@ fn read_request<R: Read>(r: &mut R) -> io::Result<Option<RedoRequest>> {
         buf.extend_from_slice(&rec);
     }
 
-    RedoRequest::decode(&buf).map(Some).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+    RedoRequest::decode(&buf)
+        .map(Some)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
 }

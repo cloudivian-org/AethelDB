@@ -86,8 +86,18 @@ fn applies_multiple_records_in_lsn_order() {
 fn reconstructs_through_the_repository() {
     let repo = Repository::with_redo(1_000, Arc::new(manager(&[])));
     repo.ingest([
-        Modification { rel: rel(), block: 0, lsn: Lsn(10), version: PageVersion::Image(vec![0u8; PAGE_SIZE]) },
-        Modification { rel: rel(), block: 0, lsn: Lsn(20), version: wal(false, &[(100, &[7, 7, 7])]) },
+        Modification {
+            rel: rel(),
+            block: 0,
+            lsn: Lsn(10),
+            version: PageVersion::Image(vec![0u8; PAGE_SIZE]),
+        },
+        Modification {
+            rel: rel(),
+            block: 0,
+            lsn: Lsn(20),
+            version: wal(false, &[(100, &[7, 7, 7])]),
+        },
     ]);
 
     match repo.get_page(key(), Lsn(100)).unwrap() {

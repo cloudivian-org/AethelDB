@@ -46,7 +46,10 @@ pub struct CommandActivator {
 impl CommandActivator {
     /// Build from start/stop command templates.
     pub fn new(start_template: impl Into<String>, stop_template: impl Into<String>) -> Self {
-        CommandActivator { start_template: start_template.into(), stop_template: stop_template.into() }
+        CommandActivator {
+            start_template: start_template.into(),
+            stop_template: stop_template.into(),
+        }
     }
 
     /// Substitute `{tenant}` and run a command, surfacing a non-zero exit as an error.
@@ -149,10 +152,9 @@ mod tests {
     async fn wait_until_ready_resolves_when_listener_is_up() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let elapsed =
-            wait_until_ready(addr, Duration::from_millis(500), Duration::from_millis(5))
-                .await
-                .unwrap();
+        let elapsed = wait_until_ready(addr, Duration::from_millis(500), Duration::from_millis(5))
+            .await
+            .unwrap();
         assert!(elapsed < Duration::from_millis(500));
     }
 
@@ -160,7 +162,8 @@ mod tests {
     async fn wait_until_ready_times_out_on_dead_address() {
         // 127.0.0.1:1 is reserved and refuses connections immediately.
         let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
-        let res = wait_until_ready(addr, Duration::from_millis(80), Duration::from_millis(10)).await;
+        let res =
+            wait_until_ready(addr, Duration::from_millis(80), Duration::from_millis(10)).await;
         assert!(res.is_err());
     }
 }
