@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/cloudivian-org/AethelDB/security/advisories/new
+    about: Please report security issues privately, not as a public issue.
+  - name: Question / discussion
+    url: https://github.com/cloudivian-org/AethelDB/discussions
+    about: Ask questions and discuss ideas here.
