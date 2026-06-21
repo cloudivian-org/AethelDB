@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Self-contained DEMO of the optional pooling tier on Kubernetes: a stock
+# PostgreSQL 16 (standing in for a tenant's compute) with PgBouncer in front of
+# it, in their own namespace. Anyone can apply this and verify pooling without
+# the full AethelDB stack:
+#
+#   kubectl apply -f deploy/pooling/k8s-demo.yaml
+#   deploy/pooling/verify-pooling-k8s.sh         # drives psql through the pooler
+#   kubectl delete -f deploy/pooling/k8s-demo.yaml   # tear down when done
+#
+# This is a DEMO/test fixture (trust auth, no persistence) — not for production.
+# The production-shaped optional manifest is deploy/k8s/pgbouncer.yaml.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aethel-pool-demo
+---
+# Stock Postgres standing in for a tenant's compute.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compute
+  namespace: aethel-pool-demo
+  labels:
+    app: compute
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: compute
+  template:
+    metadata:
+      labels:
+        app: compute
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            # DEMO ONLY: trust auth, ephemeral storage.
+            - { name: POSTGRES_HOST_AUTH_METHOD, value: "trust" }
+            - { name: POSTGRES_DB, value: "mydb" }
+          ports:
+            - { containerPort: 5432, name: postgres }
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: compute
+  namespace: aethel-pool-demo
+spec:
+  selector:
+    app: compute
+  ports:
+    - { port: 5432, targetPort: 5432, name: postgres }
+---
+# PgBouncer (transaction pooling) in front of compute.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: aethel-pool-demo
+  labels:
+    app: pgbouncer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:latest
+          env:
+            - { name: DB_HOST, value: "compute" }
+            - { name: DB_PORT, value: "5432" }
+            - { name: DB_NAME, value: "mydb" }
+            - { name: DB_USER, value: "postgres" }
+            - { name: LISTEN_PORT, value: "6432" }
+            - { name: AUTH_TYPE, value: "trust" } # DEMO ONLY — see deploy/README.md hardening
+            - { name: POOL_MODE, value: "transaction" }
+            - { name: MAX_CLIENT_CONN, value: "1000" }
+            - { name: DEFAULT_POOL_SIZE, value: "25" }
+            - { name: IGNORE_STARTUP_PARAMETERS, value: "extra_float_digits,options" }
+          ports:
+            - { containerPort: 6432, name: pgbouncer }
+          readinessProbe:
+            tcpSocket:
+              port: 6432
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: aethel-pool-demo
+  labels:
+    app: pgbouncer
+spec:
+  selector:
+    app: pgbouncer
+  ports:
+    - { port: 6432, targetPort: 6432, name: pgbouncer }

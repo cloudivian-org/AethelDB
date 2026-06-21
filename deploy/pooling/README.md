@@ -25,14 +25,35 @@ sits between the proxy and compute and does transaction pooling.
 
 ## Verify it end to end
 
-A self-contained test brings up a **stock** Postgres + PgBouncer + the
-`aethel-proxy` binary and drives a real `psql` query through the whole chain (no
-patched compute image required):
+Two self-contained tests let **anyone** reproduce the pooling verification — no
+patched compute image, no full AethelDB stack required.
+
+**Docker** — stock Postgres + PgBouncer + the `aethel-proxy` binary, driving a
+real `psql` query through the whole chain:
 
 ```bash
 cargo build -p proxy
 deploy/pooling/verify-pooling.sh
 # -> PASS: psql -> aethel-proxy -> pgbouncer -> postgres works (pooling tier verified)
+```
+
+**Kubernetes** — apply the self-contained demo
+([`k8s-demo.yaml`](k8s-demo.yaml): stock Postgres + PgBouncer in their own
+namespace) and drive `psql` through the pooler Service:
+
+```bash
+deploy/pooling/verify-pooling-k8s.sh            # apply, verify, leave running
+deploy/pooling/verify-pooling-k8s.sh --cleanup  # ... and tear down afterwards
+# -> PASS: psql -> pgbouncer (Service) -> compute works on Kubernetes
+```
+
+Or drive it by hand:
+
+```bash
+kubectl apply -f deploy/pooling/k8s-demo.yaml
+kubectl -n aethel-pool-demo port-forward svc/pgbouncer 6432:6432 &
+PGPASSWORD=postgres psql "host=127.0.0.1 port=6432 dbname=mydb user=postgres" -c "select 1"
+kubectl delete -f deploy/pooling/k8s-demo.yaml
 ```
 
 ## Enable it
