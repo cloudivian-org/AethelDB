@@ -16,7 +16,7 @@ async fn api() -> SocketAddr {
     let tenant = Tenant::new(1_000);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(serve_http_api(pageserver::TenantManager::single(tenant), None, listener));
+    tokio::spawn(serve_http_api(pageserver::TenantManager::single(tenant), None, listener, None));
     addr
 }
 
@@ -24,8 +24,39 @@ async fn api() -> SocketAddr {
 async fn api_multi() -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(serve_http_api(pageserver::TenantManager::new(1_000, None), None, listener));
+    tokio::spawn(serve_http_api(pageserver::TenantManager::new(1_000, None), None, listener, None));
     addr
+}
+
+/// An API that requires a bearer `token`.
+async fn api_with_token(token: &str) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let tok: std::sync::Arc<str> = std::sync::Arc::from(token);
+    let mgr = pageserver::TenantManager::new(1_000, None);
+    tokio::spawn(serve_http_api(mgr, None, listener, Some(tok)));
+    addr
+}
+
+/// Like `request`, but with an optional `Authorization: Bearer` header.
+async fn request_auth(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    body: &str,
+    bearer: Option<&str>,
+) -> u16 {
+    let mut sock = TcpStream::connect(addr).await.unwrap();
+    let auth = bearer.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
+    let req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: x\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    sock.write_all(req.as_bytes()).await.unwrap();
+    let mut buf = Vec::new();
+    sock.read_to_end(&mut buf).await.unwrap();
+    let text = String::from_utf8_lossy(&buf).to_string();
+    text.split_whitespace().nth(1).unwrap().parse().unwrap()
 }
 
 /// Send an HTTP request, returning `(status, body)`.
@@ -95,6 +126,32 @@ async fn http_control_plane_manages_timelines() {
     assert_eq!(s, 400);
     let (s, _) = request(addr, "GET", "/v1/nope", "").await;
     assert_eq!(s, 404);
+}
+
+#[tokio::test]
+async fn http_requires_bearer_token_when_configured() {
+    let addr = api_with_token("s3cr3t").await;
+
+    // /healthz stays open (liveness probes).
+    assert_eq!(request_auth(addr, "GET", "/healthz", "", None).await, 200);
+
+    // /v1 without a token, or with the wrong token, is rejected.
+    assert_eq!(request_auth(addr, "GET", "/v1/tenants", "", None).await, 401);
+    assert_eq!(request_auth(addr, "GET", "/v1/tenants", "", Some("nope")).await, 401);
+
+    // The correct token is accepted, and mutations work.
+    assert_eq!(request_auth(addr, "GET", "/v1/tenants", "", Some("s3cr3t")).await, 200);
+    assert_eq!(
+        request_auth(
+            addr,
+            "POST",
+            "/v1/timelines",
+            &format!(r#"{{"id":"{}"}}"#, id(1)),
+            Some("s3cr3t")
+        )
+        .await,
+        201
+    );
 }
 
 #[tokio::test]

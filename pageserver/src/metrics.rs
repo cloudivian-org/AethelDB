@@ -35,6 +35,15 @@ pub static GC_VERSIONS_REMOVED: Lazy<IntCounter> = Lazy::new(|| {
     .unwrap()
 });
 
+/// Control-plane requests rejected for a missing/invalid token.
+pub static CONTROL_AUTH_FAILURES: Lazy<IntCounter> = Lazy::new(|| {
+    register_int_counter!(
+        "aethel_pageserver_control_auth_failures_total",
+        "Control-plane requests rejected for a missing or invalid token"
+    )
+    .unwrap()
+});
+
 /// Timelines (branches) currently known.
 pub static TIMELINES: Lazy<IntGauge> = Lazy::new(|| {
     register_int_gauge!("aethel_pageserver_timelines", "Timelines (branches) currently known")

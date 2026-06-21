@@ -41,11 +41,14 @@ use crate::tenant::Tenant;
 use crate::tenant_manager::TenantManager;
 use crate::walreceiver::{WalReceiver, WalReceiverConfig};
 
-/// Serve the HTTP control-plane API on `listener`.
+/// Serve the HTTP control-plane API on `listener`. When `token` is set, every
+/// `/v1` route requires an `Authorization: Bearer <token>` header (`/healthz`
+/// stays open for liveness probes).
 pub async fn serve_http_api(
     tenants: Arc<TenantManager>,
     store: Option<Arc<dyn ObjectStore>>,
     listener: TcpListener,
+    token: Option<Arc<str>>,
 ) -> anyhow::Result<()> {
     loop {
         let (socket, _peer) = match listener.accept().await {
@@ -57,8 +60,9 @@ pub async fn serve_http_api(
         };
         let tenants = tenants.clone();
         let store = store.clone();
+        let token = token.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle(tenants, store, socket).await {
+            if let Err(err) = handle(tenants, store, token, socket).await {
                 warn!(error = %format!("{err:#}"), "http-api connection error");
             }
         });
@@ -68,15 +72,27 @@ pub async fn serve_http_api(
 async fn handle(
     tenants: Arc<TenantManager>,
     store: Option<Arc<dyn ObjectStore>>,
+    token: Option<Arc<str>>,
     mut socket: TcpStream,
 ) -> anyhow::Result<()> {
-    let (method, raw_path, body) = match read_request(&mut socket).await? {
+    let (method, raw_path, auth, body) = match read_request(&mut socket).await? {
         Some(req) => req,
         None => return Ok(()),
     };
     // Split an optional `?query` off the path.
     let (path, query) = raw_path.split_once('?').unwrap_or((raw_path.as_str(), ""));
-    let (status, json) = route(&tenants, store.as_ref(), &method, path, query, &body).await;
+
+    // Auth gate: when a token is configured, require it on everything but health.
+    let (status, json) = if let Some(expected) = token.as_deref().filter(|_| path != "/healthz") {
+        if auth.as_deref() == Some(&format!("Bearer {expected}")) {
+            route(&tenants, store.as_ref(), &method, path, query, &body).await
+        } else {
+            crate::metrics::CONTROL_AUTH_FAILURES.inc();
+            err(401, "missing or invalid bearer token")
+        }
+    } else {
+        route(&tenants, store.as_ref(), &method, path, query, &body).await
+    };
     // A 201 means a tenant/timeline/branch was created — persist the topology.
     if status == 201 {
         tenants.persist().await;
@@ -305,9 +321,12 @@ async fn route(
 
 // ---- Minimal HTTP request reader ----
 
-/// Read one HTTP/1.1 request: returns `(method, path, body)`, or `None` on a
-/// clean EOF before any bytes.
-async fn read_request(socket: &mut TcpStream) -> anyhow::Result<Option<(String, String, Vec<u8>)>> {
+/// Read one HTTP/1.1 request: returns `(method, path, authorization, body)`, or
+/// `None` on a clean EOF before any bytes.
+#[allow(clippy::type_complexity)]
+async fn read_request(
+    socket: &mut TcpStream,
+) -> anyhow::Result<Option<(String, String, Option<String>, Vec<u8>)>> {
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
 
@@ -335,17 +354,18 @@ async fn read_request(socket: &mut TcpStream) -> anyhow::Result<Option<(String, 
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("").to_string();
 
-    // Find Content-Length (case-insensitive).
-    let content_length = lines
-        .find_map(|l| {
-            let (k, v) = l.split_once(':')?;
-            if k.trim().eq_ignore_ascii_case("content-length") {
-                v.trim().parse::<usize>().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
+    // Scan the remaining header lines for Content-Length and Authorization.
+    let mut content_length = 0usize;
+    let mut authorization = None;
+    for l in lines {
+        let Some((k, v)) = l.split_once(':') else { continue };
+        let (k, v) = (k.trim(), v.trim());
+        if k.eq_ignore_ascii_case("content-length") {
+            content_length = v.parse::<usize>().unwrap_or(0);
+        } else if k.eq_ignore_ascii_case("authorization") {
+            authorization = Some(v.to_string());
+        }
+    }
 
     // Read the rest of the body.
     let body_start = header_end + 4;
@@ -358,7 +378,7 @@ async fn read_request(socket: &mut TcpStream) -> anyhow::Result<Option<(String, 
         body.extend_from_slice(&chunk[..n]);
     }
     body.truncate(content_length);
-    Ok(Some((method, path, body)))
+    Ok(Some((method, path, authorization, body)))
 }
 
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {

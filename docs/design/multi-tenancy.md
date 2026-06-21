@@ -69,8 +69,16 @@ restart rather than being reconstructed only as ids are referenced. Page *data*
 already lives durably as immutable layers; rehydrating a timeline's pages from
 those layers on restart is the complementary step, tracked separately.
 
+## Control-plane auth
+
+Both control planes take an optional shared secret (`--control-token`): the line
+endpoint requires `auth <token>` and the HTTP API an `Authorization: Bearer
+<token>` header (`/healthz` stays open). This is a coarse gate — a single
+operator secret, not per-tenant identity. Keep the endpoints internal regardless
+(see `deploy/README.md`).
+
 ## What this is not (yet)
 
 Still ahead on the operational layer: per-tenant resource limits/quotas, per-
-tenant object-store prefixes, and authn/authz on the control plane — today it is
-unauthenticated, so keep it internal (see `deploy/README.md`).
+tenant object-store prefixes, and *fine-grained* authz (per-tenant identities and
+scopes) beyond the single operator token.

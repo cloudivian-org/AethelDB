@@ -7,6 +7,8 @@
 //! it gets a simple line-oriented text protocol: one command per line, one
 //! reply line back. Commands:
 //!
+//! * `auth <token>` — authenticate the connection when the server is started
+//!   with a control token; required before any other command.
 //! * `tenants` — list known tenant ids.
 //! * `tenant <tenant-hex>` — switch the connection's current tenant (creating it
 //!   on first use); subsequent commands act on it. Defaults to `TenantId::ZERO`.
@@ -42,6 +44,7 @@ pub async fn serve_control(
     tenants: Arc<TenantManager>,
     store: Option<Arc<dyn ObjectStore>>,
     listener: TcpListener,
+    token: Option<Arc<str>>,
 ) -> anyhow::Result<()> {
     loop {
         let (socket, peer) = match listener.accept().await {
@@ -53,8 +56,9 @@ pub async fn serve_control(
         };
         let tenants = tenants.clone();
         let store = store.clone();
+        let token = token.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle_conn(tenants, store, socket).await {
+            if let Err(err) = handle_conn(tenants, store, token, socket).await {
                 warn!(%peer, error = %format!("{err:#}"), "control connection error");
             }
         });
@@ -64,6 +68,7 @@ pub async fn serve_control(
 async fn handle_conn(
     tenants: Arc<TenantManager>,
     store: Option<Arc<dyn ObjectStore>>,
+    token: Option<Arc<str>>,
     socket: TcpStream,
 ) -> anyhow::Result<()> {
     let (read_half, mut write_half) = socket.into_split();
@@ -73,7 +78,34 @@ async fn handle_conn(
     let mut tenant_id = TenantId::ZERO;
     let mut tenant = tenants.get_or_create(tenant_id);
 
+    // When a token is configured, the connection must `auth <token>` before any
+    // other command is accepted.
+    let mut authed = token.is_none();
+
     while let Some(line) = lines.next_line().await? {
+        // Auth gate: until authenticated, only `auth <token>` is allowed.
+        if !authed {
+            let mut p = line.split_whitespace();
+            let reply = match (p.next(), p.next()) {
+                (Some("auth"), Some(tok)) if token.as_deref() == Some(tok) => {
+                    authed = true;
+                    "ok authenticated".to_string()
+                }
+                (Some("auth"), _) => {
+                    crate::metrics::CONTROL_AUTH_FAILURES.inc();
+                    "err invalid token".to_string()
+                }
+                _ => {
+                    crate::metrics::CONTROL_AUTH_FAILURES.inc();
+                    "err unauthorized: send 'auth <token>' first".to_string()
+                }
+            };
+            write_half.write_all(reply.as_bytes()).await?;
+            write_half.write_all(b"\n").await?;
+            write_half.flush().await?;
+            continue;
+        }
+
         let reply = match line.split_whitespace().next() {
             // Tenant selection / listing.
             Some("tenants") => {
