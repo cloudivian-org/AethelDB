@@ -153,10 +153,11 @@ built in-test, and later against captured real WAL fixtures.
 ## Correctness notes
 
 - **Compression.** PG15+ may store FPIs compressed (pglz / lz4 / zstd). The
-  decoder records which method was used; Phase 1's `DecodedImage::restore`
-  reconstructs **uncompressed** images (re-inserting the hole) and returns a
-  typed `UnsupportedCompression` error for pglz/lz4/zstd until the matching
-  decompressor is wired (Phase 2), so we never hand back a wrong page.
+  decoder records which method was used and `DecodedImage::restore` decompresses
+  all three (pglz is implemented inline against PostgreSQL's `pg_lzcompress.c`
+  format; lz4/zstd use the `lz4_flex`/`zstd` crates against PG's raw block
+  formats) before re-inserting the hole. A corrupt or truncated compressed image
+  yields a typed `Decompress` error rather than a wrong page.
 - **`WILL_INIT`.** A record that re-initializes a page needs no base image — redo
   starts from zeroes. The decoder surfaces the flag so the repository can drop
   the now-irrelevant history before it.

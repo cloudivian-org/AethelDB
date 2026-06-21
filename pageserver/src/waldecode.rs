@@ -101,9 +101,10 @@ pub enum WalDecodeError {
     /// A stored full-page image had an unexpected size.
     #[error("full-page image is {got} bytes, expected {want}")]
     BadImageSize { got: usize, want: usize },
-    /// The image is compressed with a method this build can't yet decompress.
-    #[error("compressed full-page image ({0:?}) is not yet supported")]
-    UnsupportedCompression(Compression),
+    /// A compressed full-page image could not be decompressed (corrupt or
+    /// truncated).
+    #[error("failed to decompress {0:?} full-page image")]
+    Decompress(Compression),
     /// The hole described by an image runs past the page.
     #[error("image hole offset {offset}+{length} exceeds page size")]
     BadHole { offset: usize, length: usize },
@@ -145,38 +146,97 @@ pub struct DecodedImage {
 impl DecodedImage {
     /// Reconstruct the full 8 KiB page from the stored bytes.
     ///
-    /// Re-inserts the zero hole; decompresses if needed. Compressed images
-    /// return [`WalDecodeError::UnsupportedCompression`] until the matching
-    /// decompressor is wired in (Phase 2) — we never return a wrong page.
+    /// Decompresses the image if needed (`pglz` / `lz4` / `zstd`, the formats
+    /// PostgreSQL uses for compressed FPIs) and re-inserts the all-zero hole. A
+    /// corrupt or truncated compressed image yields [`WalDecodeError::Decompress`]
+    /// rather than a wrong page.
     pub fn restore(&self) -> Result<Vec<u8>, WalDecodeError> {
-        if self.compression != Compression::None {
-            return Err(WalDecodeError::UnsupportedCompression(self.compression));
-        }
-        let mut page = vec![0u8; XLOG_BLCKSZ];
         let hl = self.hole_length as usize;
-        if hl == 0 {
-            if self.bytes.len() != XLOG_BLCKSZ {
-                return Err(WalDecodeError::BadImageSize {
-                    got: self.bytes.len(),
-                    want: XLOG_BLCKSZ,
-                });
-            }
-            page.copy_from_slice(&self.bytes);
-        } else {
-            let ho = self.hole_offset as usize;
-            if ho + hl > XLOG_BLCKSZ {
-                return Err(WalDecodeError::BadHole { offset: ho, length: hl });
-            }
-            let want = XLOG_BLCKSZ - hl;
-            if self.bytes.len() != want {
-                return Err(WalDecodeError::BadImageSize { got: self.bytes.len(), want });
-            }
-            // bytes = [before hole][after hole]; the hole region stays zero.
-            page[..ho].copy_from_slice(&self.bytes[..ho]);
-            page[ho + hl..].copy_from_slice(&self.bytes[ho..]);
+        let ho = self.hole_offset as usize;
+        if ho + hl > XLOG_BLCKSZ {
+            return Err(WalDecodeError::BadHole { offset: ho, length: hl });
         }
+        // The stored bytes decompress to the page with its all-zero hole removed.
+        let body_len = XLOG_BLCKSZ - hl;
+        let body = match self.compression {
+            Compression::None => {
+                if self.bytes.len() != body_len {
+                    return Err(WalDecodeError::BadImageSize {
+                        got: self.bytes.len(),
+                        want: body_len,
+                    });
+                }
+                std::borrow::Cow::Borrowed(self.bytes.as_slice())
+            }
+            Compression::Pglz => std::borrow::Cow::Owned(pglz_decompress(&self.bytes, body_len)?),
+            Compression::Lz4 => std::borrow::Cow::Owned(
+                lz4_flex::block::decompress(&self.bytes, body_len)
+                    .map_err(|_| WalDecodeError::Decompress(Compression::Lz4))?,
+            ),
+            Compression::Zstd => std::borrow::Cow::Owned(
+                zstd::bulk::decompress(&self.bytes, body_len)
+                    .map_err(|_| WalDecodeError::Decompress(Compression::Zstd))?,
+            ),
+        };
+        if body.len() != body_len {
+            return Err(WalDecodeError::BadImageSize { got: body.len(), want: body_len });
+        }
+
+        // Re-insert the hole: [before hole][zeros][after hole].
+        let mut page = vec![0u8; XLOG_BLCKSZ];
+        page[..ho].copy_from_slice(&body[..ho]);
+        page[ho + hl..].copy_from_slice(&body[ho..]);
         Ok(page)
     }
+}
+
+/// Decompress a PostgreSQL `pglz`-compressed buffer to exactly `dst_len` bytes.
+///
+/// The format (see PostgreSQL's `pg_lzcompress.c`): a control byte every 8
+/// tokens, processed LSB-first; a 0 bit is a literal byte, a 1 bit is a
+/// back-reference `(length, offset)` into the output produced so far.
+fn pglz_decompress(src: &[u8], dst_len: usize) -> Result<Vec<u8>, WalDecodeError> {
+    let mut dst = Vec::with_capacity(dst_len);
+    let mut sp = 0;
+    while sp < src.len() && dst.len() < dst_len {
+        let ctrl = src[sp];
+        sp += 1;
+        for bit in 0..8 {
+            if sp >= src.len() || dst.len() >= dst_len {
+                break;
+            }
+            if (ctrl >> bit) & 1 == 0 {
+                dst.push(src[sp]);
+                sp += 1;
+                continue;
+            }
+            // A back-reference: two header bytes (+ an optional extra length byte).
+            if sp + 1 >= src.len() {
+                return Err(WalDecodeError::Decompress(Compression::Pglz));
+            }
+            let mut len = (src[sp] & 0x0f) as usize + 3;
+            let off = (((src[sp] & 0xf0) as usize) << 4) | src[sp + 1] as usize;
+            sp += 2;
+            if len == 18 {
+                if sp >= src.len() {
+                    return Err(WalDecodeError::Decompress(Compression::Pglz));
+                }
+                len += src[sp] as usize;
+                sp += 1;
+            }
+            if off == 0 || off > dst.len() {
+                return Err(WalDecodeError::Decompress(Compression::Pglz));
+            }
+            for _ in 0..len {
+                if dst.len() >= dst_len {
+                    break;
+                }
+                let b = dst[dst.len() - off];
+                dst.push(b);
+            }
+        }
+    }
+    Ok(dst)
 }
 
 /// One registered block reference within a WAL record.
@@ -755,16 +815,70 @@ mod tests {
         assert_eq!(&page[hole_offset + hole_length..], &stored[hole_offset..]);
     }
 
-    #[test]
-    fn compressed_image_restore_is_unsupported_not_wrong() {
+    /// Build a body (page with its hole removed) of recognisable nonzero bytes.
+    fn sample_body(body_len: usize) -> Vec<u8> {
+        (0..body_len).map(|i| (i % 251) as u8 + 1).collect()
+    }
+
+    /// Assert a compressed image restores to the original page (hole zeroed).
+    fn assert_restores(
+        compression: Compression,
+        compressed: Vec<u8>,
+        body: &[u8],
+        ho: usize,
+        hl: usize,
+    ) {
         let img = DecodedImage {
-            bytes: vec![1, 2, 3],
+            bytes: compressed,
+            hole_offset: ho as u16,
+            hole_length: hl as u16,
+            compression,
+            apply: false,
+        };
+        let page = img.restore().unwrap();
+        assert_eq!(page.len(), XLOG_BLCKSZ);
+        assert!(page[ho..ho + hl].iter().all(|&b| b == 0), "hole must be zero");
+        assert_eq!(&page[..ho], &body[..ho]);
+        assert_eq!(&page[ho + hl..], &body[ho..]);
+    }
+
+    #[test]
+    fn lz4_full_page_image_round_trips() {
+        let (ho, hl) = (4usize, 200usize);
+        let body = sample_body(XLOG_BLCKSZ - hl);
+        assert_restores(Compression::Lz4, lz4_flex::block::compress(&body), &body, ho, hl);
+    }
+
+    #[test]
+    fn zstd_full_page_image_round_trips() {
+        let (ho, hl) = (4usize, 200usize);
+        let body = sample_body(XLOG_BLCKSZ - hl);
+        let compressed = zstd::bulk::compress(&body, 3).unwrap();
+        assert_restores(Compression::Zstd, compressed, &body, ho, hl);
+    }
+
+    #[test]
+    fn pglz_decompresses_literals_and_back_references() {
+        // All-literals: one control byte (0x00) then the bytes.
+        let stream = vec![0x00, b'h', b'e', b'l', b'l', b'o'];
+        assert_eq!(pglz_decompress(&stream, 5).unwrap(), b"hello");
+
+        // Literals "ABC", then a back-reference (len 6, offset 3) -> "ABCABC".
+        // ctrl 0x08: bits 0..2 are literals, bit 3 is the match.
+        let stream = vec![0x08, b'A', b'B', b'C', 0x03, 0x03];
+        assert_eq!(pglz_decompress(&stream, 9).unwrap(), b"ABCABCABC");
+    }
+
+    #[test]
+    fn corrupt_compressed_image_errors_not_wrong_page() {
+        let img = DecodedImage {
+            bytes: vec![0xFF, 0x00, 0x12, 0x34], // not valid zstd
             hole_offset: 0,
             hole_length: 0,
             compression: Compression::Zstd,
             apply: false,
         };
-        assert_eq!(img.restore(), Err(WalDecodeError::UnsupportedCompression(Compression::Zstd)));
+        assert_eq!(img.restore(), Err(WalDecodeError::Decompress(Compression::Zstd)));
     }
 
     #[test]
