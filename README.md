@@ -36,7 +36,7 @@ is stateless and "in the air": scale-to-zero, serverless, weightless when idle.
 | **Durable WAL** | Quorum-replicated safekeepers over the network, with leadership election to prevent split-brain. |
 | **Storage at scale** | LSM-style layers, compaction + branch-aware garbage collection, and offload to S3-compatible object storage (AWS S3 / MinIO). |
 | **Secure ingress** | TLS termination and proxy-side SCRAM-SHA-256 authentication (rejects bad credentials *before* a cold start). |
-| **Multi-tenancy** | One page server hosts many fully-isolated tenants; reads and control ops route by `TenantId`, tenants are provisioned on first reference. |
+| **Multi-tenancy** | One page server hosts many fully-isolated tenants; reads and control ops route by `TenantId`, tenants are provisioned on first reference, and the tenant/timeline topology is **persisted to the object store** so it survives a restart. |
 | **Observability** | Prometheus `/metrics` on every service. |
 
 ## Architecture

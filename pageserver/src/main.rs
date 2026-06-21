@@ -144,11 +144,19 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // The page server hosts many tenants; reads and control ops route by id.
+    // The topology (tenants, timelines, branch ancestry) is persisted to the
+    // object store and restored here, so it survives a restart.
+    let tenants = TenantManager::with_catalog(args.freeze_threshold, redo, store.clone());
+    tenants.load_persisted().await;
+
     // Pre-provision the root tenant and its root timeline so the default
     // single-tenant path (and the legacy ingest endpoint) works out of the box.
-    let tenants = TenantManager::new(args.freeze_threshold, redo);
     let tenant = tenants.get_or_create(TenantId::ZERO);
-    let root = tenant.create_timeline(TimelineId::ZERO).context("creating root timeline")?;
+    let root = match tenant.get_timeline(TimelineId::ZERO) {
+        Some(tl) => tl,
+        None => tenant.create_timeline(TimelineId::ZERO).context("creating root timeline")?,
+    };
+    tenants.persist().await; // capture the root tenant/timeline if freshly created
 
     info!(
         listen = %args.listen,

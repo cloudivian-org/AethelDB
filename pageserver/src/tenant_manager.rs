@@ -17,7 +17,10 @@ use std::sync::{Arc, RwLock};
 
 use common::{Lsn, TenantId, TimelineId};
 use thiserror::Error;
+use tracing::{info, warn};
 
+use crate::catalog;
+use crate::objstore::ObjectStore;
 use crate::repository::CompactionStats;
 use crate::tenant::Tenant;
 use crate::walredo::WalRedoManager;
@@ -35,14 +38,32 @@ pub struct TenantManager {
     freeze_threshold: usize,
     /// Shared, stateless redo backend handed to every tenant (when configured).
     redo: Option<Arc<dyn WalRedoManager>>,
+    /// Object store used to persist the tenant/timeline catalog (when set).
+    store: Option<Arc<dyn ObjectStore>>,
     tenants: RwLock<HashMap<TenantId, Arc<Tenant>>>,
 }
 
 impl TenantManager {
     /// Build a manager that constructs each new tenant with `freeze_threshold`
-    /// and, when set, the shared `redo` backend.
+    /// and, when set, the shared `redo` backend. The topology is **not**
+    /// persisted; use [`with_catalog`](Self::with_catalog) for durability.
     pub fn new(freeze_threshold: usize, redo: Option<Arc<dyn WalRedoManager>>) -> Arc<Self> {
-        Arc::new(Self { freeze_threshold, redo, tenants: RwLock::new(HashMap::new()) })
+        Arc::new(Self { freeze_threshold, redo, store: None, tenants: RwLock::new(HashMap::new()) })
+    }
+
+    /// Like [`new`](Self::new), but persists the tenant/timeline topology to
+    /// `store` (see [`crate::catalog`]) so it survives a restart.
+    pub fn with_catalog(
+        freeze_threshold: usize,
+        redo: Option<Arc<dyn WalRedoManager>>,
+        store: Arc<dyn ObjectStore>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            freeze_threshold,
+            redo,
+            store: Some(store),
+            tenants: RwLock::new(HashMap::new()),
+        })
     }
 
     /// Wrap a single, already-constructed tenant at [`TenantId::ZERO`] — for
@@ -51,7 +72,35 @@ impl TenantManager {
     pub fn single(tenant: Arc<Tenant>) -> Arc<Self> {
         let mut map = HashMap::new();
         map.insert(TenantId::ZERO, tenant);
-        Arc::new(Self { freeze_threshold: 100_000, redo: None, tenants: RwLock::new(map) })
+        Arc::new(Self {
+            freeze_threshold: 100_000,
+            redo: None,
+            store: None,
+            tenants: RwLock::new(map),
+        })
+    }
+
+    /// Persist the current topology to the catalog (no-op without a store).
+    pub async fn persist(&self) {
+        if let Some(store) = &self.store {
+            if let Err(e) = catalog::save(store, &catalog::snapshot(self)).await {
+                warn!(error = %format!("{e:#}"), "failed to persist tenant catalog");
+            }
+        }
+    }
+
+    /// Restore the topology from the catalog at startup (no-op without a store).
+    pub async fn load_persisted(&self) {
+        if let Some(store) = &self.store {
+            match catalog::load(store).await {
+                Ok(Some(doc)) => {
+                    catalog::restore(self, &doc);
+                    info!(tenants = doc.tenants.len(), "restored tenant catalog");
+                }
+                Ok(None) => {}
+                Err(e) => warn!(error = %format!("{e:#}"), "failed to load tenant catalog"),
+            }
+        }
     }
 
     fn build_tenant(&self) -> Arc<Tenant> {

@@ -16,6 +16,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `(TenantId, TimelineId)`; the line and HTTP/JSON control planes are
   tenant-aware (defaulting to the root tenant); tenants are provisioned on first
   reference. See `docs/design/multi-tenancy.md`.
+- **Durable tenant catalog**: the tenant/timeline topology (ids + branch
+  ancestry) is persisted to the object store and restored at startup, so it
+  survives a restart. See `pageserver/src/catalog.rs`.
+- **Optional PgBouncer pooling tier**: verified end-to-end (Docker) and on
+  Kubernetes, with applyable demo fixtures. See `deploy/pooling/`.
 - **`--wal-redo` wiring**: select the real Postgres wal-redo backend at runtime.
 - **Compressed full-page images**: decode `pglz` / `lz4` / `zstd` FPIs.
 - **Proxy `CancelRequest` routing**: cancels reach the backend that owns the
