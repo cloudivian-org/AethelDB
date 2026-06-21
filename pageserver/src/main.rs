@@ -88,6 +88,20 @@ struct Args {
     /// Address for the HTTP/JSON control-plane API.
     #[arg(long, env = "SP_PS_HTTP_LISTEN", default_value = "0.0.0.0:6403")]
     http_listen: SocketAddr,
+
+    /// Path to a `postgres` binary built with the `--wal-redo` patch. When set,
+    /// the page server applies non-full-page WAL records through a real Postgres
+    /// wal-redo process instead of the native (FPI-only) backend.
+    #[arg(long, env = "SP_PS_WAL_REDO")]
+    wal_redo: Option<PathBuf>,
+
+    /// Data directory for the wal-redo Postgres process (an initdb'd cluster).
+    #[arg(long, env = "SP_PS_WAL_REDO_DATADIR", default_value = ".data/pageserver/walredo")]
+    wal_redo_datadir: PathBuf,
+
+    /// Database name the wal-redo process connects to.
+    #[arg(long, env = "SP_PS_WAL_REDO_DB", default_value = "postgres")]
+    wal_redo_db: String,
 }
 
 #[tokio::main]
@@ -115,9 +129,21 @@ async fn main() -> anyhow::Result<()> {
             })?),
         };
 
-    // One tenant with a root timeline (`TimelineId::ZERO`); branches are created
-    // at runtime via the control endpoint.
-    let tenant = Tenant::new(args.freeze_threshold);
+    // Select the WAL-redo backend: a real Postgres wal-redo process if one is
+    // configured, else the native (FPI-only) backend.
+    let tenant = match &args.wal_redo {
+        Some(postgres) => {
+            let datadir = args.wal_redo_datadir.to_string_lossy().into_owned();
+            let redo_args =
+                vec!["--wal-redo".to_string(), "-D".to_string(), datadir, args.wal_redo_db.clone()];
+            info!(postgres = %postgres.display(), "using the Postgres wal-redo backend");
+            Tenant::with_redo(
+                args.freeze_threshold,
+                Arc::new(pageserver::PostgresRedoManager::new(postgres, redo_args)),
+            )
+        }
+        None => Tenant::new(args.freeze_threshold),
+    };
     let root = tenant.create_timeline(TimelineId::ZERO).context("creating root timeline")?;
 
     info!(

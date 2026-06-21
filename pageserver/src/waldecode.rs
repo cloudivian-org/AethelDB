@@ -821,7 +821,7 @@ mod tests {
         stream.extend_from_slice(&rec1);
         // MAXALIGN pad after rec1.
         let pad1 = (8 - (rec1.len() % 8)) % 8;
-        stream.extend(std::iter::repeat(0u8).take(pad1));
+        stream.extend(std::iter::repeat_n(0u8, pad1));
         let rec2_lsn = stream.len() as u64;
         stream.extend_from_slice(&rec2);
 
@@ -853,7 +853,7 @@ mod tests {
         // to span the page boundary. Needs the long marker (len > 255).
         let main_len: u32 = 9000;
         body.extend_from_slice(&main_long(main_len));
-        body.extend(std::iter::repeat(0xEEu8).take(main_len as usize));
+        body.extend(std::iter::repeat_n(0xEEu8, main_len as usize));
         let rec = make_record(7, 0, 3, &body);
 
         // Long header on page 0.

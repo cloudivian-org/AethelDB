@@ -10,8 +10,9 @@
 
 use std::sync::Arc;
 
-use common::{ForkNumber, Lsn, PageKey, RelTag, PAGE_SIZE};
+use common::{ForkNumber, Lsn, PageKey, RelTag, TimelineId, PAGE_SIZE};
 use pageserver::page::{Modification, PageVersion, WalRecord};
+use pageserver::tenant::Tenant;
 use pageserver::walredo::{RedoError, WalRedoManager};
 use pageserver::{PageLookup, PostgresRedoManager, Repository};
 
@@ -105,6 +106,33 @@ fn reconstructs_through_the_repository() {
             assert_eq!(&p[100..103], &[7, 7, 7]);
             assert!(p[0..100].iter().all(|&b| b == 0));
         }
+        other => panic!("expected page, got {other:?}"),
+    }
+}
+
+#[test]
+fn reconstructs_through_a_tenant_with_the_redo_backend() {
+    // The exact path the binary uses when --wal-redo is set:
+    // Tenant::with_redo(PostgresRedoManager) -> timeline -> get_page.
+    let tenant = Tenant::with_redo(1_000, Arc::new(manager(&[])));
+    let tl = tenant.create_timeline(TimelineId::ZERO).unwrap();
+    tl.ingest([
+        Modification {
+            rel: rel(),
+            block: 0,
+            lsn: Lsn(10),
+            version: PageVersion::Image(vec![0u8; PAGE_SIZE]),
+        },
+        Modification {
+            rel: rel(),
+            block: 0,
+            lsn: Lsn(20),
+            version: wal(false, &[(64, &[0xEE, 0xEE])]),
+        },
+    ]);
+
+    match tl.get_page(key(), Lsn(100)).unwrap() {
+        PageLookup::Page(p) => assert_eq!(&p[64..66], &[0xEE, 0xEE]),
         other => panic!("expected page, got {other:?}"),
     }
 }
