@@ -1,0 +1,178 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "title": "AethelDB Overview",
+  "uid": "aetheldb-overview",
+  "tags": ["aetheldb"],
+  "timezone": "",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "15s",
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Proxy",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Client connections / sec",
+      "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "rate(aethel_proxy_connections_total[5m])",
+          "legendFormat": "connections"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Active connections",
+      "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "aethel_proxy_active_connections"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Cold starts, auth failures, cancels / sec",
+      "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "rate(aethel_proxy_wakes_total[5m])",
+          "legendFormat": "cold starts"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "rate(aethel_proxy_auth_failures_total[5m])",
+          "legendFormat": "auth failures"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "rate(aethel_proxy_cancels_routed_total[5m])",
+          "legendFormat": "cancels routed"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Page server",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "GetPage / sec",
+      "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "rate(aethel_pageserver_get_page_total[5m])",
+          "legendFormat": "get_page"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "WAL records & layers offloaded / sec",
+      "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "rate(aethel_pageserver_wal_records_total[5m])",
+          "legendFormat": "wal records"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "rate(aethel_pageserver_layers_offloaded_total[5m])",
+          "legendFormat": "layers offloaded"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Timelines (branches) known",
+      "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "sum(aethel_pageserver_timelines)"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Safekeeper",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "WAL appends / sec (quorum-committed)",
+      "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "rate(aethel_safekeeper_appends_total[5m])",
+          "legendFormat": "appends"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Control-plane auth failures / sec",
+      "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "aethel-prom" },
+          "expr": "rate(aethel_pageserver_control_auth_failures_total[5m])",
+          "legendFormat": "pageserver control"
+        }
+      ]
+    }
+  ]
+}

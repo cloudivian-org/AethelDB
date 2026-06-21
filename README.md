@@ -37,7 +37,7 @@ is stateless and "in the air": scale-to-zero, serverless, weightless when idle.
 | **Storage at scale** | LSM-style layers, compaction + branch-aware garbage collection, and offload to S3-compatible object storage (AWS S3 / MinIO). |
 | **Secure ingress** | TLS termination and proxy-side SCRAM-SHA-256 authentication (rejects bad credentials *before* a cold start). |
 | **Multi-tenancy** | One page server hosts many fully-isolated tenants; reads and control ops route by `TenantId`, tenants are provisioned on first reference, and the tenant/timeline topology is **persisted to the object store** so it survives a restart. |
-| **Observability** | Prometheus `/metrics` on every service. |
+| **Observability** | Prometheus `/metrics` on every service, a ready-to-run Grafana dashboard, and optional OpenTelemetry/OTLP trace export. |
 
 ## Architecture
 
@@ -177,6 +177,7 @@ Each subsystem has a focused design doc under [`docs/design/`](docs/design/):
 - [`safekeeper-replication.md`](docs/design/safekeeper-replication.md) — WAL replication + leader election.
 - [`proxy-tls.md`](docs/design/proxy-tls.md) — TLS termination, SCRAM auth, CancelRequest routing, the pooling decision.
 - [`multi-tenancy.md`](docs/design/multi-tenancy.md) — tenant isolation and routing across one page server.
+- [`observability.md`](docs/design/observability.md) — metrics, Grafana dashboards, and optional OTLP tracing.
 
 ## Status & roadmap
 
@@ -195,7 +196,10 @@ copy-on-write, compaction + branch-aware GC, S3 offload, and Prometheus metrics.
   quotas, and authn/authz on the control plane. Compute orchestration is handled
   by the **Kubernetes activator** — `proxy --features kubernetes`, see
   [`docs/design/k8s-activator.md`](docs/design/k8s-activator.md).
-- **Tracing exporters**, dashboards, and alerting on top of the metrics.
+- **Alerting & exemplars** on top of the metrics — the Prometheus + Grafana
+  stack and optional OTLP tracing already ship (see
+  [`docs/design/observability.md`](docs/design/observability.md)); alert rules
+  and metric↔trace exemplars are next.
 - **Pooling** — composed via PgBouncer rather than reimplemented, available as an
   optional tier (verified end-to-end + on Kubernetes; see
   [`deploy/pooling/README.md`](deploy/pooling/README.md) and

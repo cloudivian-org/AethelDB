@@ -17,4 +17,21 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+# Shared tracing initialization (fmt subscriber for every binary).
+tracing-subscriber = { workspace = true }
 prometheus = { version = "0.13", default-features = false }
+
+# Optional OpenTelemetry/OTLP span export, enabled by the `otlp` feature. Off by
+# default so the standard build pulls none of these (heavier) dependencies.
+opentelemetry = { version = "0.27", optional = true }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"], optional = true }
+tracing-opentelemetry = { version = "0.28", optional = true }
+
+[features]
+otlp = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:tracing-opentelemetry",
+]

@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Optional monitoring stack: Prometheus (scrapes the services' /metrics) and
+# Grafana (pre-provisioned with a Prometheus datasource and the AethelDB
+# dashboard). Run it alongside the main stack on the same network:
+#
+#   docker compose -f docker-compose.yml \
+#                  -f deploy/monitoring/docker-compose.monitoring.yml up -d
+#
+# Then open Grafana at http://localhost:3000 (admin / admin) -> "AethelDB
+# Overview". Prometheus is at http://localhost:9090.
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      # DEV ONLY default credentials — change before any non-local use.
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./deploy/monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./deploy/monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./deploy/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus

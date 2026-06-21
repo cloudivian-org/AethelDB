@@ -55,6 +55,9 @@ jobs:
       - name: Build with the kubernetes feature
         run: cargo build -p proxy --features kubernetes
 
+      - name: Build with the otlp tracing feature
+        run: cargo build -p pageserver --features otlp
+
   e2e:
     name: Python e2e (compile check)
     runs-on: ubuntu-latest
