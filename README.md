@@ -49,11 +49,14 @@ is stateless and "in the air": scale-to-zero, serverless, weightless when idle.
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture.png" width="900"
-       alt="AethelDB architecture: a client connects to aethel-proxy (wake, route, TLS, SCRAM, scale-to-zero), optionally through a PgBouncer pooling tier, to a stateless PostgreSQL 16 compute. Compute streams WAL to quorum-replicated aethel-safekeepers and fetches pages (get_page @LSN) from the aethel-pageserver, which decodes and redoes WAL through Postgres, reconstructs any page at any LSN for instant branching and PITR, compacts and GCs, and offloads immutable layers to S3/MinIO. Every service exposes Prometheus metrics with a Grafana dashboard and optional OTLP tracing.">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.png">
+    <img src="docs/assets/architecture.png" width="900"
+         alt="AethelDB architecture: a client connects to aethel-proxy (wake, route, TLS, SCRAM, scale-to-zero), optionally through a PgBouncer pooling tier, to a stateless PostgreSQL 16 compute. Compute streams WAL to quorum-replicated aethel-safekeepers and fetches pages (get_page @LSN) from the aethel-pageserver, which decodes and redoes WAL through Postgres, reconstructs any page at any LSN for instant branching and PITR, compacts and GCs, and offloads immutable layers to S3/MinIO. Every service exposes Prometheus metrics with a Grafana dashboard and optional OTLP tracing.">
+  </picture>
 </p>
 
-<p align="center"><sub><a href="docs/assets/architecture.svg">architecture.svg</a> is the vector source.</sub></p>
+<p align="center"><sub>Vector sources: <a href="docs/assets/architecture.svg">architecture.svg</a> (light) · <a href="docs/assets/architecture-dark.svg">architecture-dark.svg</a> (dark).</sub></p>
 
 - **compute** — PostgreSQL 16 from source, patched so its storage manager fetches
   pages over the network and streams WAL out, plus a `--wal-redo` mode used by the
