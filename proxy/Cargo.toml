@@ -51,6 +51,8 @@ http = { version = "1", optional = true }
 [features]
 # Build the Kubernetes activator into aethel-proxy.
 kubernetes = ["dep:kube", "dep:k8s-openapi", "dep:serde_json", "dep:http"]
+# Export OTLP traces (delegates to common's otlp feature).
+otlp = ["common/otlp"]
 
 [dev-dependencies]
 # The integration tests drive the proxy over real sockets.

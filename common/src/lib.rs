@@ -22,6 +22,7 @@ pub mod lsn;
 pub mod metrics;
 pub mod page;
 pub mod page_service;
+pub mod telemetry;
 pub mod wal_service;
 
 pub use error::{Error, Result};

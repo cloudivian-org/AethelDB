@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Prometheus scrape config for the AethelDB services. Each service exposes
+# Prometheus metrics on its own /metrics port (see common::metrics).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: aethel-proxy
+    static_configs:
+      - targets: ["proxy:9432"]
+        labels: { service: proxy }
+
+  - job_name: aethel-pageserver
+    static_configs:
+      - targets: ["pageserver:9400"]
+        labels: { service: pageserver }
+
+  - job_name: aethel-safekeeper
+    static_configs:
+      - targets: ["safekeeper:9500"]
+        labels: { service: safekeeper }
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

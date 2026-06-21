@@ -124,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
 
 /// Configure structured logging. Honors `RUST_LOG`, defaulting to `info`.
 fn init_tracing() {
-    use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    fmt().with_env_filter(filter).with_target(false).init();
+    // Shared fmt subscriber; also exports OTLP spans when built with the `otlp`
+    // feature and OTEL_EXPORTER_OTLP_ENDPOINT is set.
+    common::telemetry::init("aethel-safekeeper");
 }

@@ -24,6 +24,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Control-plane auth**: optional `--control-token` gates the line endpoint
   (`auth <token>`) and the HTTP API (`Authorization: Bearer <token>`);
   `/healthz` stays open.
+- **Monitoring stack**: a ready-to-run Prometheus + Grafana setup
+  (`deploy/monitoring/`) with a scrape config and a pre-provisioned **AethelDB
+  Overview** dashboard. Verified by a real scrape of a live service.
+- **OTLP tracing (optional)**: a shared `common::telemetry::init` installs the
+  fmt subscriber for every binary and, when built with the `otlp` feature and
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set, exports spans over OTLP. Off by default —
+  the standard build pulls no OpenTelemetry dependencies. See
+  `docs/design/observability.md`.
 - **`--wal-redo` wiring**: select the real Postgres wal-redo backend at runtime.
 - **Compressed full-page images**: decode `pglz` / `lz4` / `zstd` FPIs.
 - **Proxy `CancelRequest` routing**: cancels reach the backend that owns the

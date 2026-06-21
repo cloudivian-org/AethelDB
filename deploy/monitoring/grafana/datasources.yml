@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: aethel-prom
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

@@ -31,5 +31,9 @@ async-trait = { workspace = true }
 prometheus = { version = "0.13", default-features = false }
 once_cell = "1"
 
+[features]
+# Export OTLP traces (delegates to common's otlp feature).
+otlp = ["common/otlp"]
+
 [dev-dependencies]
 tokio = { workspace = true }
