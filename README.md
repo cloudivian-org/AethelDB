@@ -199,6 +199,10 @@ setup, testing expectations, and the conventions this project follows (one
 focused PR per change, a design doc per subsystem, every change building green
 with zero warnings).
 
+- **Code of conduct:** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- **Security:** report privately — see [`SECURITY.md`](SECURITY.md)
+- **Changes:** [`CHANGELOG.md`](CHANGELOG.md)
+
 ## License
 
 Apache 2.0. Every source file carries an `SPDX-License-Identifier: Apache-2.0`
