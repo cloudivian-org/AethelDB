@@ -80,6 +80,68 @@ async fn spawn_echo_backend() -> SocketAddr {
     addr
 }
 
+/// A backend that, on each session, sends a `BackendKeyData(pid, secret)` then
+/// echoes; and, when the proxy forwards a `CancelRequest`, reports the carried
+/// `(process_id, secret_key)` on the returned channel. Stands in for compute.
+async fn spawn_keyed_backend(
+    pid: i32,
+    secret: i32,
+) -> (SocketAddr, tokio::sync::mpsc::UnboundedReceiver<(i32, i32)>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        loop {
+            let (mut sock, _) = match listener.accept().await {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                // Read one length-prefixed packet (a startup or a CancelRequest).
+                let mut len = [0u8; 4];
+                if sock.read_exact(&mut len).await.is_err() {
+                    return;
+                }
+                let total = i32::from_be_bytes(len) as usize;
+                let mut rest = vec![0u8; total.saturating_sub(4)];
+                if sock.read_exact(&mut rest).await.is_err() {
+                    return;
+                }
+                // A CancelRequest carries the cancel code in its first 4 bytes.
+                if rest.len() >= 12
+                    && i32::from_be_bytes(rest[0..4].try_into().unwrap()) == 80_877_102
+                {
+                    let p = i32::from_be_bytes(rest[4..8].try_into().unwrap());
+                    let s = i32::from_be_bytes(rest[8..12].try_into().unwrap());
+                    let _ = tx.send((p, s));
+                    return;
+                }
+                // A normal session: announce BackendKeyData, then echo.
+                let mut k = vec![b'K'];
+                k.extend_from_slice(&12i32.to_be_bytes());
+                k.extend_from_slice(&pid.to_be_bytes());
+                k.extend_from_slice(&secret.to_be_bytes());
+                if sock.write_all(&k).await.is_err() {
+                    return;
+                }
+                let mut buf = [0u8; 1024];
+                loop {
+                    match sock.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if sock.write_all(&buf[..n]).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    (addr, rx)
+}
+
 /// Bind the proxy on an ephemeral port, spawn its accept loop, return its addr.
 async fn spawn_proxy(proxy: Arc<Proxy>) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -153,6 +215,40 @@ async fn cold_start_invokes_activator() {
     assert!(outcome.is_ok(), "cold-start test timed out");
     assert!(marker.exists(), "activator start command should have created the marker");
     let _ = std::fs::remove_file(&marker);
+}
+
+#[tokio::test]
+async fn routes_cancel_request_to_owning_backend() {
+    let (backend, mut cancels) = spawn_keyed_backend(4242, 2024).await;
+    let registry =
+        Arc::new(Registry::from_iter([("echo".to_string(), TenantState::new(backend, true))]));
+    let proxy = Proxy::new(registry, Arc::new(NoopActivator), HealthConfig::default());
+    let proxy_addr = spawn_proxy(proxy).await;
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+        // Session connection: startup, then read the BackendKeyData the proxy
+        // forwards (and registers under the session's cancel key).
+        let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+        client.write_all(&startup_packet("echo")).await.unwrap();
+        let mut k = [0u8; 13]; // 'K' + len(4) + pid(4) + secret(4)
+        client.read_exact(&mut k).await.unwrap();
+        assert_eq!(k[0], b'K', "expected BackendKeyData");
+        assert_eq!(i32::from_be_bytes(k[5..9].try_into().unwrap()), 4242);
+        assert_eq!(i32::from_be_bytes(k[9..13].try_into().unwrap()), 2024);
+
+        // A second connection cancels using that key; the proxy must forward the
+        // CancelRequest to the same backend that owns the session.
+        let mut canceller = TcpStream::connect(proxy_addr).await.unwrap();
+        canceller.write_all(&proxy::protocol::cancel_request_bytes(4242, 2024)).await.unwrap();
+
+        let got = cancels.recv().await.expect("backend should receive the cancel");
+        assert_eq!(got, (4242, 2024), "cancel must carry the backend's key");
+
+        drop(client); // keep the session alive until the cancel is routed
+    })
+    .await;
+
+    assert!(outcome.is_ok(), "cancel routing test timed out");
 }
 
 #[tokio::test]

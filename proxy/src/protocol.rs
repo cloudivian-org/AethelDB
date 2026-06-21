@@ -178,6 +178,18 @@ pub fn error_response(severity: &str, code: &str, message: &str) -> Vec<u8> {
     msg
 }
 
+/// Build the 16-byte `CancelRequest` packet for a backend's `(process_id,
+/// secret_key)`, exactly as a client sends it. Used to forward a cancel to the
+/// backend that owns the session.
+pub fn cancel_request_bytes(process_id: i32, secret_key: i32) -> [u8; 16] {
+    let mut buf = [0u8; 16];
+    buf[0..4].copy_from_slice(&16i32.to_be_bytes());
+    buf[4..8].copy_from_slice(&CANCEL_REQUEST_CODE.to_be_bytes());
+    buf[8..12].copy_from_slice(&process_id.to_be_bytes());
+    buf[12..16].copy_from_slice(&secret_key.to_be_bytes());
+    buf
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +253,15 @@ mod tests {
         assert_eq!(
             parse_first_message(buf).unwrap(),
             FirstMessage::CancelRequest { process_id: 4242, secret_key: 99 }
+        );
+    }
+
+    #[test]
+    fn cancel_request_bytes_round_trips_through_the_parser() {
+        let bytes = cancel_request_bytes(-12345, 67890).to_vec();
+        assert_eq!(
+            parse_first_message(bytes).unwrap(),
+            FirstMessage::CancelRequest { process_id: -12345, secret_key: 67890 }
         );
     }
 

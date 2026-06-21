@@ -36,3 +36,18 @@ pub static ACTIVE_CONNECTIONS: Lazy<IntGauge> = Lazy::new(|| {
     register_int_gauge!("aethel_proxy_active_connections", "Connections currently splicing")
         .unwrap()
 });
+
+/// `CancelRequest`s successfully routed to the owning backend.
+pub static CANCELS_ROUTED: Lazy<IntCounter> = Lazy::new(|| {
+    register_int_counter!("aethel_proxy_cancels_routed_total", "CancelRequests routed to a backend")
+        .unwrap()
+});
+
+/// `CancelRequest`s for an unknown/expired key (dropped).
+pub static CANCELS_UNKNOWN: Lazy<IntCounter> = Lazy::new(|| {
+    register_int_counter!(
+        "aethel_proxy_cancels_unknown_total",
+        "CancelRequests for an unknown session key"
+    )
+    .unwrap()
+});
