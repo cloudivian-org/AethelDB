@@ -48,21 +48,12 @@ is stateless and "in the air": scale-to-zero, serverless, weightless when idle.
 
 ## Architecture
 
-```
-            ┌──────────────┐   startup / SSLRequest / SASL   ┌──────────────────┐
- client ───▶│ aethel-proxy │────── wake / route / TLS ──────▶│  compute (PG 16)  │
-   5432     └──────────────┘       scale-to-zero             └───────┬───────────┘
-                                                       get_page @lsn │   │ stream WAL
-                                                                     │   ▼
-                                          ┌──────────────────────────▼─┐ ┌────────────────────┐
-                                          │     aethel-pageserver       │ │   aethel-safekeeper │
-                                          │  decode WAL · redo · branch │ │  WAL quorum +       │
-                                          │  reconstruct pages @ LSN    │◀┘  replication + vote │
-                                          │  compaction · GC            │ └────────────────────┘
-                                          └──────────────┬──────────────┘
-                                              S3 / MinIO  │ (immutable layers)
-                                                          ▼
-```
+<p align="center">
+  <img src="docs/assets/architecture.png" width="900"
+       alt="AethelDB architecture: a client connects to aethel-proxy (wake, route, TLS, SCRAM, scale-to-zero), optionally through a PgBouncer pooling tier, to a stateless PostgreSQL 16 compute. Compute streams WAL to quorum-replicated aethel-safekeepers and fetches pages (get_page @LSN) from the aethel-pageserver, which decodes and redoes WAL through Postgres, reconstructs any page at any LSN for instant branching and PITR, compacts and GCs, and offloads immutable layers to S3/MinIO. Every service exposes Prometheus metrics with a Grafana dashboard and optional OTLP tracing.">
+</p>
+
+<p align="center"><sub><a href="docs/assets/architecture.svg">architecture.svg</a> is the vector source.</sub></p>
 
 - **compute** — PostgreSQL 16 from source, patched so its storage manager fetches
   pages over the network and streams WAL out, plus a `--wal-redo` mode used by the
@@ -90,8 +81,14 @@ AethelDB/
 ├── compute/              # patchable PostgreSQL build + wal-redo
 │   ├── patches/          # 0001-smgr-pluggable, 0002-wal-redo-mode
 │   └── walredo/          # wal-redo verification harness
+├── deploy/               # Dockerfile, k8s manifests, hardening guide
+│   ├── k8s/              # Kustomize manifests (+ optional pgbouncer.yaml)
+│   ├── pooling/          # optional PgBouncer tier + verify scripts
+│   └── monitoring/       # Prometheus + Grafana stack & dashboard
 ├── e2e-tests/            # Python lifecycle suite
-└── docs/design/          # design docs (one per subsystem)
+└── docs/
+    ├── design/           # design docs (one per subsystem)
+    └── assets/           # architecture diagram (svg + png)
 ```
 
 ## Quickstart
@@ -158,11 +155,13 @@ plane or `aethelctl`-style tooling:
 # Start the page server with --control-token <secret> to require auth; then
 # pass `-H "Authorization: Bearer <secret>"` on every /v1 call (/healthz is open).
 curl localhost:6403/healthz
-curl -XPOST localhost:6403/v1/timelines  -d '{"id":"<32-hex>"}'
+curl -XPOST localhost:6403/v1/tenants    -d '{"id":"<32-hex>"}'
+curl       localhost:6403/v1/tenants
+curl -XPOST localhost:6403/v1/timelines  -d '{"id":"<32-hex>"}'                       # optional "tenant":"<hex>"
 curl -XPOST localhost:6403/v1/branches   -d '{"timeline":"<hex>","parent":"<hex>","lsn":5000}'
 curl -XPOST localhost:6403/v1/timelines/receive -d '{"timeline":"<hex>","safekeeper":"127.0.0.1:6500","start_lsn":0}'
 curl -XPOST localhost:6403/v1/gc          -d '{"horizon_lsn":4000}'
-curl       localhost:6403/v1/timelines
+curl       'localhost:6403/v1/timelines?tenant=<hex>'   # omit ?tenant for the root tenant
 ```
 
 ### Metrics
@@ -188,29 +187,29 @@ Each subsystem has a focused design doc under [`docs/design/`](docs/design/):
 
 ## Status & roadmap
 
-**Done and tested:** the full data path — scale-to-zero proxy (TLS + SCRAM),
-quorum-replicated safekeepers with election, a page server that decodes real
-PostgreSQL WAL and redoes it through Postgres, instant branching + PITR with
-copy-on-write, compaction + branch-aware GC, S3 offload, and Prometheus metrics.
+**Done and tested:**
 
-**Next — the operational layer** (production hosting, not core architecture):
+- **Data path** — scale-to-zero proxy (TLS + SCRAM + `CancelRequest` routing),
+  quorum-replicated safekeepers with leader election, a page server that decodes
+  real PostgreSQL WAL (incl. `pglz`/`lz4`/`zstd` FPIs) and redoes it through
+  Postgres, instant branching + PITR with copy-on-write, compaction + branch-aware
+  GC, and S3 offload.
+- **Operational layer** — **multi-tenancy** (route by `TenantId`) with a
+  **durable tenant catalog** that survives restart; a **token-gated** HTTP/JSON +
+  line control plane; the **Kubernetes activator** (`proxy --features kubernetes`);
+  an **optional PgBouncer pooling** tier (verified on Docker + Kubernetes);
+  and **observability** — Prometheus metrics, a Grafana dashboard, and optional
+  OTLP tracing.
 
-- **Control-plane catalog & authz** — the page server is **multi-tenant** today
-  (reads and the HTTP/JSON + line control planes route by `TenantId`, tenants
-  provisioned on first reference; see
-  [`docs/design/multi-tenancy.md`](docs/design/multi-tenancy.md)). Still ahead: a
-  *durable* tenant/project catalog that survives restart, per-tenant
-  quotas, and authn/authz on the control plane. Compute orchestration is handled
-  by the **Kubernetes activator** — `proxy --features kubernetes`, see
-  [`docs/design/k8s-activator.md`](docs/design/k8s-activator.md).
-- **Alerting & exemplars** on top of the metrics — the Prometheus + Grafana
-  stack and optional OTLP tracing already ship (see
-  [`docs/design/observability.md`](docs/design/observability.md)); alert rules
-  and metric↔trace exemplars are next.
-- **Pooling** — composed via PgBouncer rather than reimplemented, available as an
-  optional tier (verified end-to-end + on Kubernetes; see
-  [`deploy/pooling/README.md`](deploy/pooling/README.md) and
-  [`docs/design/proxy-tls.md`](docs/design/proxy-tls.md)).
+**Next:**
+
+- **Per-tenant quotas & fine-grained authz** (per-tenant identities/scopes beyond
+  the single operator token) and per-tenant object-store prefixes.
+- **Page-data rehydration on restart** — the catalog restores topology today;
+  reloading a timeline's pages from its object-store layers is the complement.
+- **Alerting & exemplars** — alert rules shipped with the dashboard and
+  metric↔trace exemplars, on top of the existing
+  [observability](docs/design/observability.md) stack.
 
 ## Contributing
 
