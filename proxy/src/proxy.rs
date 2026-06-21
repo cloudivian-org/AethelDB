@@ -25,6 +25,7 @@ use tokio_rustls::TlsAcceptor;
 use tracing::{debug, info, warn};
 
 use crate::activator::{wait_until_ready, Activator};
+use crate::cancel::{CancelRegistry, KeyScanner};
 use crate::protocol::{
     self, parse_first_message, FirstMessage, StartupMessage, MAX_STARTUP_LEN, MIN_STARTUP_LEN,
 };
@@ -53,6 +54,8 @@ pub struct Proxy {
     health: HealthConfig,
     /// When set, the proxy terminates TLS for clients that send an `SSLRequest`.
     tls: Option<TlsAcceptor>,
+    /// Live sessions' backend cancellation keys, for routing `CancelRequest`s.
+    cancels: Arc<CancelRegistry>,
 }
 
 impl Proxy {
@@ -62,7 +65,13 @@ impl Proxy {
         activator: Arc<dyn Activator>,
         health: HealthConfig,
     ) -> Arc<Self> {
-        Arc::new(Proxy { registry, activator, health, tls: None })
+        Arc::new(Proxy {
+            registry,
+            activator,
+            health,
+            tls: None,
+            cancels: Arc::new(CancelRegistry::new()),
+        })
     }
 
     /// Assemble the proxy with TLS termination enabled.
@@ -72,7 +81,13 @@ impl Proxy {
         health: HealthConfig,
         tls: TlsAcceptor,
     ) -> Arc<Self> {
-        Arc::new(Proxy { registry, activator, health, tls: Some(tls) })
+        Arc::new(Proxy {
+            registry,
+            activator,
+            health,
+            tls: Some(tls),
+            cancels: Arc::new(CancelRegistry::new()),
+        })
     }
 
     /// The tenant registry (used by the idle reaper).
@@ -131,13 +146,43 @@ impl Proxy {
                 self.serve_over(client, peer, None).await
             }
 
-            FirstMessage::CancelRequest { process_id, .. } => {
-                // Routing cancels requires tracking backend key data per session;
-                // deferred. Close cleanly so the client isn't left hanging.
-                debug!(%peer, process_id, "received CancelRequest (unsupported); closing");
-                Ok(())
+            FirstMessage::CancelRequest { process_id, secret_key } => {
+                self.route_cancel(process_id, secret_key, peer).await
             }
         }
+    }
+
+    /// Forward a `CancelRequest` to the backend that owns the session, looked up
+    /// by the `(process_id, secret_key)` the backend issued at startup.
+    async fn route_cancel(
+        self: &Arc<Self>,
+        process_id: i32,
+        secret_key: i32,
+        peer: SocketAddr,
+    ) -> anyhow::Result<()> {
+        let Some(backend_addr) = self.cancels.lookup((process_id, secret_key)) else {
+            crate::metrics::CANCELS_UNKNOWN.inc();
+            debug!(%peer, process_id, "CancelRequest for an unknown session key; dropping");
+            return Ok(());
+        };
+        // Best-effort: a cancel is advisory. Connect, send the verbatim packet,
+        // and close; failures are logged, not surfaced to the (already-gone) client.
+        match TcpStream::connect(backend_addr).await {
+            Ok(mut backend) => {
+                let bytes = protocol::cancel_request_bytes(process_id, secret_key);
+                if let Err(err) = backend.write_all(&bytes).await {
+                    warn!(%peer, %backend_addr, error = %err, "failed to forward CancelRequest");
+                } else {
+                    backend.flush().await.ok();
+                    crate::metrics::CANCELS_ROUTED.inc();
+                    debug!(%peer, process_id, %backend_addr, "routed CancelRequest to backend");
+                }
+            }
+            Err(err) => {
+                warn!(%peer, %backend_addr, error = %err, "could not connect to backend to cancel");
+            }
+        }
+        Ok(())
     }
 
     /// Drive the connection over the negotiated client stream `S` (plaintext
@@ -167,7 +212,9 @@ impl Proxy {
                         client.write_all(b"N").await.context("declining SSL/GSS")?;
                         client.flush().await.ok();
                     }
-                    FirstMessage::CancelRequest { .. } => return Ok(()),
+                    FirstMessage::CancelRequest { process_id, secret_key } => {
+                        return self.route_cancel(process_id, secret_key, peer).await
+                    }
                 }
             },
         };
@@ -214,11 +261,68 @@ impl Proxy {
         let _guard = ConnGuard::new(state.clone());
         info!(%peer, tenant = %tenant_name, %backend_addr, "splicing connection");
 
-        let (c2b, b2c) = tokio::io::copy_bidirectional(&mut client, &mut backend)
+        let (c2b, b2c) = self
+            .splice_capturing_cancel_key(&mut client, &mut backend, backend_addr)
             .await
             .context("while proxying client <-> backend")?;
         debug!(%peer, tenant = %tenant_name, client_to_backend = c2b, backend_to_client = b2c, "connection finished");
         Ok(())
+    }
+
+    /// Splice `client` <-> `backend` like `copy_bidirectional`, but sniff the
+    /// backend→client direction for `BackendKeyData` and register the session's
+    /// cancellation key for the duration of the splice. Bytes pass through
+    /// untouched; the key is registered *before* the bytes carrying it reach the
+    /// client, so a cancel that races the first reply still resolves.
+    async fn splice_capturing_cancel_key<S>(
+        self: &Arc<Self>,
+        client: &mut S,
+        backend: &mut TcpStream,
+        backend_addr: SocketAddr,
+    ) -> std::io::Result<(u64, u64)>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send,
+    {
+        let (mut cr, mut cw) = tokio::io::split(client);
+        let (mut br, mut bw) = backend.split();
+
+        // client -> backend: a plain copy.
+        let c2b = async {
+            let n = tokio::io::copy(&mut cr, &mut bw).await?;
+            bw.shutdown().await.ok();
+            Ok::<u64, std::io::Error>(n)
+        };
+
+        // backend -> client: copy, scanning for the cancellation key as we go.
+        let cancels = self.cancels.clone();
+        let b2c = async {
+            let mut scanner = KeyScanner::new();
+            let mut captured = None;
+            let mut buf = vec![0u8; 16 * 1024];
+            let mut total = 0u64;
+            loop {
+                let n = br.read(&mut buf).await?;
+                if n == 0 {
+                    break;
+                }
+                if !scanner.done() {
+                    if let Some(key) = scanner.push(&buf[..n]) {
+                        cancels.insert(key, backend_addr); // before forwarding
+                        captured = Some(key);
+                    }
+                }
+                cw.write_all(&buf[..n]).await?;
+                total += n as u64;
+            }
+            cw.shutdown().await.ok();
+            Ok::<(u64, Option<crate::cancel::CancelKey>), std::io::Error>((total, captured))
+        };
+
+        let (c2b_n, (b2c_n, captured)) = tokio::try_join!(c2b, b2c)?;
+        if let Some(key) = captured {
+            self.cancels.remove(key);
+        }
+        Ok((c2b_n, b2c_n))
     }
 
     /// Make sure the tenant's compute is running and reachable, holding the

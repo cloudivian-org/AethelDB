@@ -66,9 +66,30 @@ channel-binding-free `n,,` mode (`SCRAM-SHA-256`, not `-PLUS`). Verified with a
 full client↔server round-trip and a proxy gate test (bad password rejected with
 no wake; good password authenticates and splices).
 
+## CancelRequest routing
+
+A client cancels a running query by opening a *new* connection and sending a
+`CancelRequest` carrying the backend's process id and secret key — the
+`BackendKeyData` the server issued at startup. Since the proxy splices each
+session straight through, the backend's own `(process_id, secret_key)` reaches
+the client unchanged, so the cancel must go back to *that same backend*.
+
+The proxy (`cancel.rs`) handles this with two pieces:
+
+- A `KeyScanner` sniffs the backend→client byte stream during the splice, frames
+  the typed protocol messages, and extracts the first `BackendKeyData` — passing
+  every byte through to the client untouched. The session's key is registered in
+  a `CancelRegistry` (`(pid, secret) → backend addr`) *before* the bytes carrying
+  it reach the client, so a cancel that races the first reply still resolves. The
+  entry is removed when the splice ends.
+- On a `CancelRequest`, the proxy looks the key up and forwards the verbatim
+  16-byte packet to the owning backend. Unknown keys are dropped (advisory).
+
+This keys cancels on the backend's real `(pid, secret)`; a future refinement is
+to hand the client a *proxy-minted* key and translate on cancel (as PgBouncer
+does), which removes any cross-backend collision risk and hides backend internals.
+
 ## Next
 
-- **CancelRequest routing** — track per-session backend key data so cancels
-  reach the right backend.
 - **mTLS to the backend** — if compute ever runs off the trusted local network.
 - **Channel binding** (`SCRAM-SHA-256-PLUS`) once TLS is mandatory.

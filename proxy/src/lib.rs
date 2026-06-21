@@ -13,6 +13,7 @@
 //! * [`idle`] — the background reaper that scales idle tenants to zero.
 
 pub mod activator;
+pub mod cancel;
 pub mod idle;
 #[cfg(feature = "kubernetes")]
 pub mod k8s;
