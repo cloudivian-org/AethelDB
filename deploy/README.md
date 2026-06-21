@@ -76,3 +76,48 @@ Every pod is annotated `prometheus.io/scrape: "true"` with its metrics port.
   per-tenant `compute-<tenant>` Deployment to zero/one (RBAC in
   `proxy-rbac.yaml`). See [`docs/design/k8s-activator.md`](../docs/design/k8s-activator.md);
   verify against a real cluster with `deploy/k8s/verify-activator.sh`.
+
+## Security hardening
+
+> ⚠️ **The bundled Compose and Kubernetes manifests are configured for local
+> development, not production.** They ship with well-known default credentials
+> and convenient-but-unsafe defaults. Before exposing AethelDB anywhere, work
+> through this checklist.
+
+1. **Replace every default credential.** The MinIO root user/password are
+   `minioadmin`/`minioadmin` in `docker-compose.yml` and `deploy/k8s/minio.yaml`,
+   and the page server's S3 keys default to the same. In production, run against
+   managed S3 (or a hardened MinIO) and inject credentials from a secret store —
+   never commit them. The k8s manifests read S3 keys from a `Secret`; create it
+   with your own values (`kubectl create secret generic aethel-s3 ...`) and do
+   **not** apply `minio.yaml` as-is.
+
+2. **Do not mount the host Docker socket.** The Compose stack bind-mounts
+   `/var/run/docker.sock` into the proxy so the `CommandActivator` can start a
+   compute container — this grants the proxy **root-equivalent control of the
+   host** and is for local use only. In production, orchestrate compute with the
+   **Kubernetes activator** (scoped RBAC in `proxy-rbac.yaml`), which needs only
+   `get`/`patch` on a single Deployment's `scale` subresource — not Docker.
+
+3. **Terminate TLS and require authentication.** Run the proxy with
+   `--tls-cert`/`--tls-key` and configure per-tenant **SCRAM-SHA-256** verifiers
+   so credentials are checked *before* a cold start. Without these the proxy
+   speaks plaintext and wakes compute for any connection.
+
+4. **Lock down the network.** The safekeeper (WAL), page server (GetPage +
+   ingest + control + HTTP), and MinIO endpoints are **unauthenticated** and must
+   never be exposed beyond the trusted cluster network. Use Kubernetes
+   `NetworkPolicy` (or security groups) so only the intended services can reach
+   them; expose **only** the proxy's client port externally.
+
+5. **Protect the control plane.** The page server's line-oriented control
+   endpoint (`:6402`) and HTTP/JSON API (`:6403`) can create/branch/GC timelines
+   with no auth. Keep them on an internal interface and front them with your
+   control plane's authn/authz.
+
+6. **Run as non-root, read-only.** Set `runAsNonRoot`, a read-only root
+   filesystem, and dropped capabilities on the service containers; persist only
+   the safekeeper's WAL volume and the page server's local cache.
+
+7. **Pin images by digest.** Replace the `:dev` tags with immutable digests and
+   scan them in CI before promotion.
