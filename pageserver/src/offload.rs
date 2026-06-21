@@ -18,6 +18,7 @@ use tracing::{info, warn};
 use crate::objstore::ObjectStore;
 use crate::repository::Repository;
 use crate::tenant::Tenant;
+use crate::tenant_manager::TenantManager;
 
 /// Object-key prefix under which layer files are stored.
 pub const LAYER_PREFIX: &str = "layers/";
@@ -60,14 +61,23 @@ pub async fn offload_tenant(tenant: &Arc<Tenant>, store: &Arc<dyn ObjectStore>) 
     uploaded
 }
 
+/// Run one offload pass across every timeline of every provisioned tenant.
+pub async fn offload_all(tenants: &Arc<TenantManager>, store: &Arc<dyn ObjectStore>) -> usize {
+    let mut uploaded = 0;
+    for (_, tenant) in tenants.tenants() {
+        uploaded += offload_tenant(&tenant, store).await;
+    }
+    uploaded
+}
+
 /// Run the offload loop forever, scanning every `tick`. Spawn at startup.
-/// Offloads frozen layers from every timeline of the tenant.
-pub async fn run(tenant: Arc<Tenant>, store: Arc<dyn ObjectStore>, tick: Duration) {
+/// Offloads frozen layers from every timeline of every tenant.
+pub async fn run(tenants: Arc<TenantManager>, store: Arc<dyn ObjectStore>, tick: Duration) {
     info!(?tick, "layer offload worker started");
     let mut ticker = tokio::time::interval(tick);
     loop {
         ticker.tick().await;
-        offload_tenant(&tenant, &store).await;
+        offload_all(&tenants, &store).await;
     }
 }
 

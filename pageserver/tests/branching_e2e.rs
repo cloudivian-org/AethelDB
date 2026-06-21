@@ -67,9 +67,9 @@ async fn branch_over_the_network_is_isolated() {
     let (l, ingest_addr) = bind().await;
     tokio::spawn(serve_ingest(root.clone(), l));
     let (l, page_addr) = bind().await;
-    tokio::spawn(serve_pages(tenant.clone(), l));
+    tokio::spawn(serve_pages(pageserver::TenantManager::single(tenant.clone()), l));
     let (l, control_addr) = bind().await;
-    tokio::spawn(serve_control(tenant.clone(), None, l));
+    tokio::spawn(serve_control(pageserver::TenantManager::single(tenant.clone()), None, l));
 
     let branch_id = TimelineId::from_bytes([2; 16]);
 
@@ -117,7 +117,7 @@ async fn branch_over_the_network_is_isolated() {
 
         // 5. An unknown timeline is a clean error, not a panic.
         match get_page(&mut psock, TimelineId::from_bytes([9; 16]), 0, 100).await {
-            Response::Error(msg) => assert!(msg.contains("unknown timeline"), "msg: {msg}"),
+            Response::Error(msg) => assert!(msg.contains("unknown"), "msg: {msg}"),
             other => panic!("expected error, got {other:?}"),
         }
     })

@@ -22,7 +22,7 @@ use pageserver::control::serve_control;
 use pageserver::objstore::{LocalObjectStore, ObjectStore};
 use pageserver::offload;
 use pageserver::server::{serve_ingest, serve_pages};
-use pageserver::tenant::Tenant;
+use pageserver::tenant_manager::TenantManager;
 use pageserver::walreceiver::{WalReceiver, WalReceiverConfig};
 
 /// Command-line / environment configuration for the page server.
@@ -130,20 +130,24 @@ async fn main() -> anyhow::Result<()> {
         };
 
     // Select the WAL-redo backend: a real Postgres wal-redo process if one is
-    // configured, else the native (FPI-only) backend.
-    let tenant = match &args.wal_redo {
+    // configured, else the native (FPI-only) backend. It is stateless and shared
+    // across every tenant the manager provisions.
+    let redo: Option<Arc<dyn pageserver::WalRedoManager>> = match &args.wal_redo {
         Some(postgres) => {
             let datadir = args.wal_redo_datadir.to_string_lossy().into_owned();
             let redo_args =
                 vec!["--wal-redo".to_string(), "-D".to_string(), datadir, args.wal_redo_db.clone()];
             info!(postgres = %postgres.display(), "using the Postgres wal-redo backend");
-            Tenant::with_redo(
-                args.freeze_threshold,
-                Arc::new(pageserver::PostgresRedoManager::new(postgres, redo_args)),
-            )
+            Some(Arc::new(pageserver::PostgresRedoManager::new(postgres, redo_args)))
         }
-        None => Tenant::new(args.freeze_threshold),
+        None => None,
     };
+
+    // The page server hosts many tenants; reads and control ops route by id.
+    // Pre-provision the root tenant and its root timeline so the default
+    // single-tenant path (and the legacy ingest endpoint) works out of the box.
+    let tenants = TenantManager::new(args.freeze_threshold, redo);
+    let tenant = tenants.get_or_create(TenantId::ZERO);
     let root = tenant.create_timeline(TimelineId::ZERO).context("creating root timeline")?;
 
     info!(
@@ -161,9 +165,9 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(common::metrics::serve_metrics(metrics_listener));
     info!(addr = %args.metrics_listen, "serving Prometheus metrics");
 
-    // Background layer offload (across every timeline of the tenant).
+    // Background layer offload (across every timeline of every tenant).
     tokio::spawn(offload::run(
-        tenant.clone(),
+        tenants.clone(),
         store.clone(),
         Duration::from_secs(args.offload_tick_secs),
     ));
@@ -179,14 +183,14 @@ async fn main() -> anyhow::Result<()> {
     let control_listener = TcpListener::bind(args.control_listen)
         .await
         .with_context(|| format!("failed to bind control {}", args.control_listen))?;
-    tokio::spawn(serve_control(tenant.clone(), Some(store.clone()), control_listener));
+    tokio::spawn(serve_control(tenants.clone(), Some(store.clone()), control_listener));
     info!(addr = %args.control_listen, "branch control endpoint ready");
 
     // HTTP/JSON control-plane API.
     let http_listener = TcpListener::bind(args.http_listen)
         .await
         .with_context(|| format!("failed to bind http api {}", args.http_listen))?;
-    tokio::spawn(pageserver::serve_http_api(tenant.clone(), Some(store.clone()), http_listener));
+    tokio::spawn(pageserver::serve_http_api(tenants.clone(), Some(store.clone()), http_listener));
     info!(addr = %args.http_listen, "HTTP control-plane API ready");
 
     // Optional: pull committed WAL directly from a safekeeper (Phase 4) into the
@@ -217,7 +221,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to bind {}", args.listen))?;
     info!(addr = %args.listen, "ready to serve pages");
-    serve_pages(tenant, page_listener).await
+    serve_pages(tenants, page_listener).await
 }
 
 /// Configure structured logging. Honors `RUST_LOG`, defaulting to `info`.

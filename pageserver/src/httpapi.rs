@@ -9,12 +9,18 @@
 //! health):
 //!
 //! * `GET  /healthz`                  — liveness.
-//! * `GET  /v1/timelines`             — list timeline ids.
+//! * `GET  /v1/tenants`               — list tenant ids.
+//! * `POST /v1/tenants`               — `{ "id": "<hex>" }` create a tenant.
+//! * `GET  /v1/timelines`             — list timeline ids (`?tenant=<hex>`).
 //! * `POST /v1/timelines`             — `{ "id": "<hex>" }` create a root timeline.
 //! * `POST /v1/branches`              — `{ "timeline", "parent", "lsn" }` branch.
 //! * `POST /v1/timelines/receive` — `{ "timeline", "safekeeper", "start_lsn" }`:
 //!   attach a WAL receiver to a timeline.
 //! * `POST /v1/gc` — `{ "horizon_lsn" }`: compact + branch-aware GC.
+//!
+//! Every `/v1` operation acts on a tenant: POST bodies take an optional
+//! `"tenant": "<hex>"` (and `GET`s a `?tenant=<hex>`); omitting it selects the
+//! root tenant ([`TenantId::ZERO`]). Tenants are provisioned on first reference.
 //!
 //! The HTTP is hand-rolled (one request per connection, `Connection: close`) to
 //! keep the dependency footprint small and consistent with the rest of the
@@ -32,11 +38,12 @@ use tracing::warn;
 use crate::objstore::ObjectStore;
 use crate::offload::layer_key;
 use crate::tenant::Tenant;
+use crate::tenant_manager::TenantManager;
 use crate::walreceiver::{WalReceiver, WalReceiverConfig};
 
 /// Serve the HTTP control-plane API on `listener`.
 pub async fn serve_http_api(
-    tenant: Arc<Tenant>,
+    tenants: Arc<TenantManager>,
     store: Option<Arc<dyn ObjectStore>>,
     listener: TcpListener,
 ) -> anyhow::Result<()> {
@@ -48,10 +55,10 @@ pub async fn serve_http_api(
                 continue;
             }
         };
-        let tenant = tenant.clone();
+        let tenants = tenants.clone();
         let store = store.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle(tenant, store, socket).await {
+            if let Err(err) = handle(tenants, store, socket).await {
                 warn!(error = %format!("{err:#}"), "http-api connection error");
             }
         });
@@ -59,15 +66,17 @@ pub async fn serve_http_api(
 }
 
 async fn handle(
-    tenant: Arc<Tenant>,
+    tenants: Arc<TenantManager>,
     store: Option<Arc<dyn ObjectStore>>,
     mut socket: TcpStream,
 ) -> anyhow::Result<()> {
-    let (method, path, body) = match read_request(&mut socket).await? {
+    let (method, raw_path, body) = match read_request(&mut socket).await? {
         Some(req) => req,
         None => return Ok(()),
     };
-    let (status, json) = route(&tenant, store.as_ref(), &method, &path, &body).await;
+    // Split an optional `?query` off the path.
+    let (path, query) = raw_path.split_once('?').unwrap_or((raw_path.as_str(), ""));
+    let (status, json) = route(&tenants, store.as_ref(), &method, path, query, &body).await;
     let reason = if (200..300).contains(&status) { "OK" } else { "Error" };
     let response = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json}",
@@ -81,24 +90,32 @@ async fn handle(
 // ---- Routing ----
 
 #[derive(Deserialize)]
+struct TenantBody {
+    id: String,
+}
+#[derive(Deserialize)]
 struct CreateBody {
     id: String,
+    tenant: Option<String>,
 }
 #[derive(Deserialize)]
 struct BranchBody {
     timeline: String,
     parent: String,
     lsn: u64,
+    tenant: Option<String>,
 }
 #[derive(Deserialize)]
 struct ReceiveBody {
     timeline: String,
     safekeeper: String,
     start_lsn: u64,
+    tenant: Option<String>,
 }
 #[derive(Deserialize)]
 struct GcBody {
     horizon_lsn: u64,
+    tenant: Option<String>,
 }
 #[derive(Serialize)]
 struct ErrorMsg {
@@ -109,17 +126,61 @@ fn err(status: u16, msg: impl Into<String>) -> (u16, String) {
     (status, serde_json::to_string(&ErrorMsg { error: msg.into() }).unwrap())
 }
 
+/// Resolve an optional tenant id (hex string) to a tenant, provisioning it on
+/// first use. `None` selects the root tenant ([`TenantId::ZERO`]).
+fn resolve_tenant(
+    tenants: &Arc<TenantManager>,
+    raw: &Option<String>,
+) -> Result<(TenantId, Arc<Tenant>), (u16, String)> {
+    let id = match raw {
+        None => TenantId::ZERO,
+        Some(s) => s.parse::<TenantId>().map_err(|_| err(400, "tenant must be 32 hex chars"))?,
+    };
+    Ok((id, tenants.get_or_create(id)))
+}
+
+/// Read the `tenant` parameter from a query string (`tenant=<hex>`), if present.
+fn query_tenant(query: &str) -> Option<String> {
+    query.split('&').find_map(|kv| kv.strip_prefix("tenant=").map(|v| v.to_string()))
+}
+
 async fn route(
-    tenant: &Arc<Tenant>,
+    tenants: &Arc<TenantManager>,
     store: Option<&Arc<dyn ObjectStore>>,
     method: &str,
     path: &str,
+    query: &str,
     body: &[u8],
 ) -> (u16, String) {
     match (method, path) {
         ("GET", "/healthz") => (200, r#"{"status":"ok"}"#.to_string()),
 
+        ("GET", "/v1/tenants") => {
+            let mut ids: Vec<String> = tenants.tenant_ids().iter().map(|t| t.to_string()).collect();
+            ids.sort();
+            (200, serde_json::json!({ "tenants": ids }).to_string())
+        }
+
+        ("POST", "/v1/tenants") => {
+            let b: TenantBody = match serde_json::from_slice(body) {
+                Ok(b) => b,
+                Err(e) => return err(400, format!("invalid body: {e}")),
+            };
+            let id = match b.id.parse::<TenantId>() {
+                Ok(id) => id,
+                Err(_) => return err(400, "id must be 32 hex chars"),
+            };
+            match tenants.create(id) {
+                Ok(_) => (201, serde_json::json!({ "created": id.to_string() }).to_string()),
+                Err(e) => err(409, e.to_string()),
+            }
+        }
+
         ("GET", "/v1/timelines") => {
+            let (_, tenant) = match resolve_tenant(tenants, &query_tenant(query)) {
+                Ok(t) => t,
+                Err(e) => return e,
+            };
             let mut ids: Vec<String> =
                 tenant.timeline_ids().iter().map(|t| t.to_string()).collect();
             ids.sort();
@@ -130,6 +191,10 @@ async fn route(
             let b: CreateBody = match serde_json::from_slice(body) {
                 Ok(b) => b,
                 Err(e) => return err(400, format!("invalid body: {e}")),
+            };
+            let (_, tenant) = match resolve_tenant(tenants, &b.tenant) {
+                Ok(t) => t,
+                Err(e) => return e,
             };
             let id = match b.id.parse::<TimelineId>() {
                 Ok(id) => id,
@@ -145,6 +210,10 @@ async fn route(
             let b: BranchBody = match serde_json::from_slice(body) {
                 Ok(b) => b,
                 Err(e) => return err(400, format!("invalid body: {e}")),
+            };
+            let (_, tenant) = match resolve_tenant(tenants, &b.tenant) {
+                Ok(t) => t,
+                Err(e) => return e,
             };
             let (Ok(new), Ok(parent)) =
                 (b.timeline.parse::<TimelineId>(), b.parent.parse::<TimelineId>())
@@ -166,6 +235,10 @@ async fn route(
                 Ok(b) => b,
                 Err(e) => return err(400, format!("invalid body: {e}")),
             };
+            let (tenant_id, tenant) = match resolve_tenant(tenants, &b.tenant) {
+                Ok(t) => t,
+                Err(e) => return e,
+            };
             let Ok(timeline) = b.timeline.parse::<TimelineId>() else {
                 return err(400, "timeline must be 32 hex chars");
             };
@@ -175,7 +248,7 @@ async fn route(
             let Some(tl) = tenant.get_timeline(timeline) else {
                 return err(404, format!("unknown timeline {timeline}"));
             };
-            let cfg = WalReceiverConfig::new(addr, TenantId::ZERO, timeline, Lsn(b.start_lsn));
+            let cfg = WalReceiverConfig::new(addr, tenant_id, timeline, Lsn(b.start_lsn));
             match WalReceiver::connect(tl, cfg).await {
                 Ok(receiver) => {
                     tokio::spawn(async move {
@@ -193,6 +266,10 @@ async fn route(
             let b: GcBody = match serde_json::from_slice(body) {
                 Ok(b) => b,
                 Err(e) => return err(400, format!("invalid body: {e}")),
+            };
+            let (_, tenant) = match resolve_tenant(tenants, &b.tenant) {
+                Ok(t) => t,
+                Err(e) => return e,
             };
             let stats = tenant.gc(Lsn(b.horizon_lsn));
             let versions: usize = stats.iter().map(|(_, s)| s.versions_removed).sum();

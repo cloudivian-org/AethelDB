@@ -22,7 +22,7 @@ use tracing::{debug, warn};
 
 use crate::page::Modification;
 use crate::repository::PageLookup;
-use crate::tenant::Tenant;
+use crate::tenant_manager::TenantManager;
 use crate::timeline::Timeline;
 
 /// Header length of a page-service request (to size the first read).
@@ -31,11 +31,11 @@ const PAGE_REQ_HEADER: usize = 8;
 const MAX_INGEST_BODY: usize = 1 << 20;
 
 /// Serve the page-service endpoint: `GetPage` / `GetRelSize`, routed to the
-/// timeline named in each request.
-pub async fn serve_pages(tenant: Arc<Tenant>, listener: TcpListener) -> anyhow::Result<()> {
+/// `(tenant, timeline)` named in each request.
+pub async fn serve_pages(tenants: Arc<TenantManager>, listener: TcpListener) -> anyhow::Result<()> {
     accept_loop(listener, move |socket| {
-        let tenant = tenant.clone();
-        async move { handle_page_conn(tenant, socket).await }
+        let tenants = tenants.clone();
+        async move { handle_page_conn(tenants, socket).await }
     })
     .await
 }
@@ -77,7 +77,10 @@ where
     }
 }
 
-async fn handle_page_conn(tenant: Arc<Tenant>, mut socket: TcpStream) -> anyhow::Result<()> {
+async fn handle_page_conn(
+    tenants: Arc<TenantManager>,
+    mut socket: TcpStream,
+) -> anyhow::Result<()> {
     let mut header = [0u8; PAGE_REQ_HEADER];
     loop {
         match socket.read_exact(&mut header).await {
@@ -95,12 +98,14 @@ async fn handle_page_conn(tenant: Arc<Tenant>, mut socket: TcpStream) -> anyhow:
             .context("reading page request body")?;
         let req = Request::decode(&full).context("decoding page request")?;
 
-        // Route to the requested timeline; an unknown timeline is an error.
-        let timeline_id = match &req {
-            Request::GetPage { timeline, .. } | Request::GetRelSize { timeline, .. } => *timeline,
+        // Route to the requested (tenant, timeline); unknown either is an error.
+        let (tenant_id, timeline_id) = match &req {
+            Request::GetPage { tenant, timeline, .. }
+            | Request::GetRelSize { tenant, timeline, .. } => (*tenant, *timeline),
         };
-        let resp = match tenant.get_timeline(timeline_id) {
-            None => Response::Error(format!("unknown timeline {timeline_id}")),
+        let timeline = tenants.get(tenant_id).and_then(|t| t.get_timeline(timeline_id));
+        let resp = match timeline {
+            None => Response::Error(format!("unknown tenant/timeline {tenant_id}/{timeline_id}")),
             Some(timeline) => match req {
                 Request::GetPage { rel, block, lsn, .. } => {
                     crate::metrics::GET_PAGE.inc();

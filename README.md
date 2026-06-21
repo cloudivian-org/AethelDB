@@ -36,6 +36,7 @@ is stateless and "in the air": scale-to-zero, serverless, weightless when idle.
 | **Durable WAL** | Quorum-replicated safekeepers over the network, with leadership election to prevent split-brain. |
 | **Storage at scale** | LSM-style layers, compaction + branch-aware garbage collection, and offload to S3-compatible object storage (AWS S3 / MinIO). |
 | **Secure ingress** | TLS termination and proxy-side SCRAM-SHA-256 authentication (rejects bad credentials *before* a cold start). |
+| **Multi-tenancy** | One page server hosts many fully-isolated tenants; reads and control ops route by `TenantId`, tenants are provisioned on first reference. |
 | **Observability** | Prometheus `/metrics` on every service. |
 
 ## Architecture
@@ -172,7 +173,8 @@ Each subsystem has a focused design doc under [`docs/design/`](docs/design/):
 - [`branching.md`](docs/design/branching.md) — timelines, instant branching, PITR.
 - [`compaction-gc.md`](docs/design/compaction-gc.md) — layer compaction, branch-aware GC.
 - [`safekeeper-replication.md`](docs/design/safekeeper-replication.md) — WAL replication + leader election.
-- [`proxy-tls.md`](docs/design/proxy-tls.md) — TLS termination, SCRAM auth, the pooling decision.
+- [`proxy-tls.md`](docs/design/proxy-tls.md) — TLS termination, SCRAM auth, CancelRequest routing, the pooling decision.
+- [`multi-tenancy.md`](docs/design/multi-tenancy.md) — tenant isolation and routing across one page server.
 
 ## Status & roadmap
 
@@ -183,11 +185,14 @@ copy-on-write, compaction + branch-aware GC, S3 offload, and Prometheus metrics.
 
 **Next — the operational layer** (production hosting, not core architecture):
 
-- **Control plane & multi-tenancy** — a tenant/project catalog and provisioning
-  API beyond the single-tenant model. (The page server already exposes an
-  HTTP/JSON control API; compute orchestration is handled by the **Kubernetes
-  activator** — `proxy --features kubernetes`, see
-  [`docs/design/k8s-activator.md`](docs/design/k8s-activator.md).)
+- **Control-plane catalog & authz** — the page server is **multi-tenant** today
+  (reads and the HTTP/JSON + line control planes route by `TenantId`, tenants
+  provisioned on first reference; see
+  [`docs/design/multi-tenancy.md`](docs/design/multi-tenancy.md)). Still ahead: a
+  *durable* tenant/project catalog that survives restart, per-tenant
+  quotas, and authn/authz on the control plane. Compute orchestration is handled
+  by the **Kubernetes activator** — `proxy --features kubernetes`, see
+  [`docs/design/k8s-activator.md`](docs/design/k8s-activator.md).
 - **Tracing exporters**, dashboards, and alerting on top of the metrics.
 - **Pooling** — composed via PgBouncer rather than reimplemented (see
   [`docs/design/proxy-tls.md`](docs/design/proxy-tls.md)).
