@@ -20,6 +20,9 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9090"
     environment:
+      # DEV ONLY — well-known default credentials. Replace these (and the page
+      # server's S3 keys) before any non-local use. See deploy/README.md
+      # "Security hardening".
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
@@ -116,7 +119,10 @@ services:
       - "0.0.0.0:5432"
       - "--metrics-listen"
       - "0.0.0.0:9432"
-    # The proxy needs the host Docker socket to start/stop compute containers.
+    # DEV ONLY — the proxy needs the host Docker socket so the CommandActivator
+    # can start/stop compute containers. This grants root-equivalent control of
+    # the host; never do this in production. Use the Kubernetes activator
+    # instead (deploy/README.md "Security hardening", proxy-rbac.yaml).
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
