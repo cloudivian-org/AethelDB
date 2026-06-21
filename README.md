@@ -5,6 +5,13 @@ Copyright 2026 The AethelDB Authors
 
 # AethelDB
 
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/cloudivian-org/AethelDB?color=success)](https://github.com/cloudivian-org/AethelDB/releases)
+[![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg?logo=rust)](https://www.rust-lang.org/)
+[![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-blue.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Tests](https://img.shields.io/badge/tests-147%20passing-brightgreen.svg)](#status--roadmap)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 **An open-source, serverless PostgreSQL platform** — compute (a stateless
 PostgreSQL engine) is separated from storage (a virtual, log-structured page
 layer), so a database can **scale to zero** when idle, **cold-start** on the next
