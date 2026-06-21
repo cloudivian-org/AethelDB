@@ -72,7 +72,7 @@ async fn ingest_then_getpage_reconstructs_history() {
     let page_addr = {
         let tenant = tenant.clone();
         spawn(move |l| async move {
-            let _ = serve_pages(tenant, l).await;
+            let _ = serve_pages(pageserver::TenantManager::single(tenant), l).await;
         })
         .await
     };

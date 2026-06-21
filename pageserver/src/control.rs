@@ -7,6 +7,9 @@
 //! it gets a simple line-oriented text protocol: one command per line, one
 //! reply line back. Commands:
 //!
+//! * `tenants` — list known tenant ids.
+//! * `tenant <tenant-hex>` — switch the connection's current tenant (creating it
+//!   on first use); subsequent commands act on it. Defaults to `TenantId::ZERO`.
 //! * `create <timeline-hex>` — create a fresh root timeline.
 //! * `branch <new-hex> <parent-hex> <lsn>` — branch `new` off `parent` at `lsn`.
 //! * `list` — list known timeline ids.
@@ -25,12 +28,18 @@ use tracing::{debug, warn};
 use crate::objstore::ObjectStore;
 use crate::offload::layer_key;
 use crate::tenant::Tenant;
+use crate::tenant_manager::TenantManager;
 use crate::walreceiver::{WalReceiver, WalReceiverConfig};
 
 /// Serve the control endpoint: branch-management commands. When `store` is set,
 /// `gc` also deletes the compacted-away layer objects from it.
+///
+/// Each connection operates on a *current tenant*, defaulting to
+/// [`TenantId::ZERO`]; `tenant <hex>` switches it (provisioning on first use) and
+/// `tenants` lists known tenant ids. Every other command (`create` / `branch` /
+/// `receive` / `gc` / `list`) acts on the current tenant.
 pub async fn serve_control(
-    tenant: Arc<Tenant>,
+    tenants: Arc<TenantManager>,
     store: Option<Arc<dyn ObjectStore>>,
     listener: TcpListener,
 ) -> anyhow::Result<()> {
@@ -42,10 +51,10 @@ pub async fn serve_control(
                 continue;
             }
         };
-        let tenant = tenant.clone();
+        let tenants = tenants.clone();
         let store = store.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle_conn(tenant, store, socket).await {
+            if let Err(err) = handle_conn(tenants, store, socket).await {
                 warn!(%peer, error = %format!("{err:#}"), "control connection error");
             }
         });
@@ -53,18 +62,37 @@ pub async fn serve_control(
 }
 
 async fn handle_conn(
-    tenant: Arc<Tenant>,
+    tenants: Arc<TenantManager>,
     store: Option<Arc<dyn ObjectStore>>,
     socket: TcpStream,
 ) -> anyhow::Result<()> {
     let (read_half, mut write_half) = socket.into_split();
     let mut lines = BufReader::new(read_half).lines();
+
+    // The connection's current tenant; defaults to the root tenant.
+    let mut tenant_id = TenantId::ZERO;
+    let mut tenant = tenants.get_or_create(tenant_id);
+
     while let Some(line) = lines.next_line().await? {
-        // `gc` and `receive` are async (object-store deletes / spawning a
-        // receiver); the rest are pure and handled by `exec`.
         let reply = match line.split_whitespace().next() {
+            // Tenant selection / listing.
+            Some("tenants") => {
+                let mut ids: Vec<String> =
+                    tenants.tenant_ids().iter().map(|t| t.to_string()).collect();
+                ids.sort();
+                format!("ok {}", ids.join(" "))
+            }
+            Some("tenant") => match line.split_whitespace().nth(1).map(|s| s.parse::<TenantId>()) {
+                Some(Ok(id)) => {
+                    tenant_id = id;
+                    tenant = tenants.get_or_create(id);
+                    format!("ok tenant {id}")
+                }
+                _ => "err usage: tenant <tenant-hex>".to_string(),
+            },
+            // `gc` and `receive` are async; the rest are pure and handled by `exec`.
             Some("gc") => gc_command(&tenant, store.as_ref(), &line).await,
-            Some("receive") => receive_command(&tenant, &line).await,
+            Some("receive") => receive_command(&tenant, tenant_id, &line).await,
             _ => exec(&tenant, &line),
         };
         debug!(%line, %reply, "control command");
@@ -108,7 +136,7 @@ async fn gc_command(
 /// Attach a WAL receiver to a timeline, streaming committed WAL from a
 /// safekeeper into that branch. This is what makes a branch ingestible over the
 /// network (each timeline can stream from its own safekeeper position).
-async fn receive_command(tenant: &Arc<Tenant>, line: &str) -> String {
+async fn receive_command(tenant: &Arc<Tenant>, tenant_id: TenantId, line: &str) -> String {
     let mut parts = line.split_whitespace();
     parts.next(); // "receive"
     let timeline = parts.next().and_then(|s| s.parse::<TimelineId>().ok());
@@ -125,7 +153,7 @@ async fn receive_command(tenant: &Arc<Tenant>, line: &str) -> String {
     let Some(tl) = tenant.get_timeline(timeline) else {
         return format!("err unknown timeline {timeline}");
     };
-    let cfg = WalReceiverConfig::new(addr, TenantId::ZERO, timeline, Lsn(start_lsn));
+    let cfg = WalReceiverConfig::new(addr, tenant_id, timeline, Lsn(start_lsn));
     match WalReceiver::connect(tl, cfg).await {
         Ok(receiver) => {
             tokio::spawn(async move {

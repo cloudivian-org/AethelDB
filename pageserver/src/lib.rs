@@ -30,6 +30,7 @@ pub mod page;
 pub mod repository;
 pub mod server;
 pub mod tenant;
+pub mod tenant_manager;
 pub mod timeline;
 pub mod waldecode;
 pub mod walreceiver;
@@ -45,6 +46,7 @@ pub use page::{ByteEdit, Modification, PageVersion, WalRecord};
 pub use repository::{PageLookup, Repository};
 pub use server::{serve_ingest, serve_pages};
 pub use tenant::{Tenant, TenantError};
+pub use tenant_manager::{TenantManager, TenantManagerError};
 pub use timeline::Timeline;
 pub use waldecode::{
     decode_wal_record, Compression, DecodedBlock, DecodedImage, DecodedWalRecord, WalDecodeError,

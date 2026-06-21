@@ -11,6 +11,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Multi-tenancy**: one page server hosts many isolated tenants. Reads route by
+  `(TenantId, TimelineId)`; the line and HTTP/JSON control planes are
+  tenant-aware (defaulting to the root tenant); tenants are provisioned on first
+  reference. See `docs/design/multi-tenancy.md`.
+- **`--wal-redo` wiring**: select the real Postgres wal-redo backend at runtime.
+- **Compressed full-page images**: decode `pglz` / `lz4` / `zstd` FPIs.
+- **Proxy `CancelRequest` routing**: cancels reach the backend that owns the
+  session.
+- CI (GitHub Actions) and an expanded end-to-end suite (HTTP control plane +
+  metrics); OSS community files (`SECURITY.md`, `CODE_OF_CONDUCT.md`, issue/PR
+  templates); a deploy **Security hardening** checklist.
+
 ## [0.1.0] - 2026-06-21
 
 The first release: a working, end-to-end-tested serverless-PostgreSQL data plane.

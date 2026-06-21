@@ -6,7 +6,7 @@
 
 use std::net::SocketAddr;
 
-use common::TimelineId;
+use common::{TenantId, TimelineId};
 use pageserver::serve_http_api;
 use pageserver::tenant::Tenant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -16,7 +16,15 @@ async fn api() -> SocketAddr {
     let tenant = Tenant::new(1_000);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(serve_http_api(tenant, None, listener));
+    tokio::spawn(serve_http_api(pageserver::TenantManager::single(tenant), None, listener));
+    addr
+}
+
+/// An API backed by an empty multi-tenant manager (no pre-created tenant).
+async fn api_multi() -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(serve_http_api(pageserver::TenantManager::new(1_000, None), None, listener));
     addr
 }
 
@@ -38,6 +46,10 @@ async fn request(addr: SocketAddr, method: &str, path: &str, body: &str) -> (u16
 
 fn id(n: u8) -> String {
     TimelineId::from_bytes([n; 16]).to_string()
+}
+
+fn tid(n: u8) -> String {
+    TenantId::from_bytes([n; 16]).to_string()
 }
 
 #[tokio::test]
@@ -83,4 +95,40 @@ async fn http_control_plane_manages_timelines() {
     assert_eq!(s, 400);
     let (s, _) = request(addr, "GET", "/v1/nope", "").await;
     assert_eq!(s, 404);
+}
+
+#[tokio::test]
+async fn http_isolates_tenants() {
+    let addr = api_multi().await;
+    let (a, b) = (tid(0xAA), tid(0xBB));
+
+    // Create two tenants; a duplicate conflicts.
+    for t in [&a, &b] {
+        let (s, _) = request(addr, "POST", "/v1/tenants", &format!(r#"{{"id":"{t}"}}"#)).await;
+        assert_eq!(s, 201);
+    }
+    let (s, _) = request(addr, "POST", "/v1/tenants", &format!(r#"{{"id":"{a}"}}"#)).await;
+    assert_eq!(s, 409);
+
+    // Both tenants are listed.
+    let (s, body) = request(addr, "GET", "/v1/tenants", "").await;
+    assert_eq!(s, 200);
+    assert!(body.contains(&a) && body.contains(&b));
+
+    // The same timeline id can exist independently in each tenant.
+    let mk = |t: &str, tl: &str| format!(r#"{{"id":"{tl}","tenant":"{t}"}}"#);
+    let (s, _) = request(addr, "POST", "/v1/timelines", &mk(&a, &id(1))).await;
+    assert_eq!(s, 201);
+    let (s, _) = request(addr, "POST", "/v1/timelines", &mk(&b, &id(1))).await;
+    assert_eq!(s, 201, "same timeline id in a different tenant is not a conflict");
+
+    // A timeline created only in A is invisible to B.
+    let (s, _) = request(addr, "POST", "/v1/timelines", &mk(&a, &id(2))).await;
+    assert_eq!(s, 201);
+    let (s, list_a) = request(addr, "GET", &format!("/v1/timelines?tenant={a}"), "").await;
+    assert_eq!(s, 200);
+    assert!(list_a.contains(&id(1)) && list_a.contains(&id(2)));
+    let (s, list_b) = request(addr, "GET", &format!("/v1/timelines?tenant={b}"), "").await;
+    assert_eq!(s, 200);
+    assert!(list_b.contains(&id(1)) && !list_b.contains(&id(2)), "B must not see A's timeline");
 }
