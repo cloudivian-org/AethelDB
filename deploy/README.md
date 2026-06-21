@@ -76,6 +76,11 @@ Every pod is annotated `prometheus.io/scrape: "true"` with its metrics port.
   per-tenant `compute-<tenant>` Deployment to zero/one (RBAC in
   `proxy-rbac.yaml`). See [`docs/design/k8s-activator.md`](../docs/design/k8s-activator.md);
   verify against a real cluster with `deploy/k8s/verify-activator.sh`.
+- **Connection pooling (optional)** — compose with PgBouncer in front of compute
+  for transaction pooling. Apply `deploy/k8s/pgbouncer.yaml` (not in the default
+  kustomization), or run the verified standalone demo
+  `deploy/pooling/verify-pooling.sh`. See
+  [`deploy/pooling/README.md`](pooling/README.md).
 
 ## Security hardening
 

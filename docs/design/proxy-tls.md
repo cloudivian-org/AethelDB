@@ -51,6 +51,16 @@ Chaining PgBouncer behind the activation proxy keeps each layer focused; a Rust
 pool crate (`deadpool` / `bb8`) is an option for in-process reuse later. This is
 a deliberate decision not to build a PgBouncer equivalent from scratch.
 
+This tier is **optional and wired, not just sketched**. The topology is verified
+end to end — `psql → aethel-proxy → PgBouncer → Postgres` — by
+[`deploy/pooling/verify-pooling.sh`](../../deploy/pooling/verify-pooling.sh)
+(against stock Postgres) and an optional Kubernetes manifest
+[`deploy/k8s/pgbouncer.yaml`](../../deploy/k8s/pgbouncer.yaml) (validated on a
+real cluster). See [`deploy/pooling/README.md`](../../deploy/pooling/README.md)
+for how to enable it. Because the proxy replays the client's startup packet
+verbatim to its tenant backend, switching that backend from compute to a
+PgBouncer endpoint is purely configuration — no code change.
+
 ## Proxy-side SCRAM authentication
 
 When a tenant has a stored SCRAM-SHA-256 verifier, the proxy authenticates the

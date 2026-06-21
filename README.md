@@ -194,7 +194,9 @@ copy-on-write, compaction + branch-aware GC, S3 offload, and Prometheus metrics.
   by the **Kubernetes activator** — `proxy --features kubernetes`, see
   [`docs/design/k8s-activator.md`](docs/design/k8s-activator.md).
 - **Tracing exporters**, dashboards, and alerting on top of the metrics.
-- **Pooling** — composed via PgBouncer rather than reimplemented (see
+- **Pooling** — composed via PgBouncer rather than reimplemented, available as an
+  optional tier (verified end-to-end + on Kubernetes; see
+  [`deploy/pooling/README.md`](deploy/pooling/README.md) and
   [`docs/design/proxy-tls.md`](docs/design/proxy-tls.md)).
 
 ## Contributing
