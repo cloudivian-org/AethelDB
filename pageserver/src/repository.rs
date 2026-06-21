@@ -597,7 +597,7 @@ mod tests {
             page.extend_from_slice(rec);
             if i + 1 < records.len() {
                 let pad = (8 - (page.len() % 8)) % 8;
-                page.extend(std::iter::repeat(0u8).take(pad));
+                page.extend(std::iter::repeat_n(0u8, pad));
             }
         }
         page
