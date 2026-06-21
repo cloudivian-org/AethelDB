@@ -16,7 +16,7 @@ The name comes from *aether* — the clear upper air — for a database whose co
 is stateless and "in the air": scale-to-zero, serverless, weightless when idle.
 
 > **Status:** a working, end-to-end-tested data plane. The four services build
-> from source, **127 tests pass with zero warnings**, and the hard parts are real
+> from source, **142 tests pass with zero warnings**, and the hard parts are real
 > — including a verified `postgres --wal-redo` backend that reconstructs pages
 > byte-for-byte from genuine PostgreSQL WAL. The remaining work is the production
 > *operational* layer (orchestration, multi-tenant control plane); see
