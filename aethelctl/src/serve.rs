@@ -90,6 +90,17 @@ fn route(
             if let Some(name) = rest.strip_suffix("/stop") {
                 return api(database_action(cfg, name, false));
             }
+            if let Some(name) = rest.strip_suffix("/branch") {
+                return api(branch_database(client, cfg, name, body));
+            }
+        }
+    }
+    // Dynamic: DELETE /api/databases/<name> (deprovision).
+    if *method == Method::Delete {
+        if let Some(name) = path.strip_prefix("/api/databases/") {
+            if !name.contains('/') {
+                return api(delete_database(client, cfg, name));
+            }
         }
     }
     match (method, path) {
@@ -176,18 +187,63 @@ fn database_action(cfg: &ServeCfg, name: &str, start: bool) -> Result<Value> {
 const ROOT_TIMELINE: &str = "00000000000000000000000000000000";
 
 /// Provision a database by name: derive its tenant, create it + a root timeline
-/// on the control plane (idempotent), and record the name locally.
+/// on the control plane (idempotent), register a proxy route so its connection
+/// string works immediately, and record the name locally.
 fn create_database(client: &Client, cfg: &ServeCfg, body: &str) -> Result<Value> {
     let name = field(&parse(body), "name")?.to_string();
     let db = databases::upsert(&name)?;
     ignore_conflict(client.create_tenant(&db.id))?;
     ignore_conflict(client.create_timeline(ROOT_TIMELINE, Some(&db.id)))?;
+    proxy_route(cfg, &db.name, true); // automatic routing (best-effort)
     Ok(json!({
         "name": db.name,
         "id": db.id,
         "connection": databases::connection_string(&db.name, &cfg.client_endpoint),
         "status": "active",
     }))
+}
+
+/// Deprovision a database: delete its tenant on the control plane, deregister its
+/// proxy route, and forget the name locally. Idempotent.
+fn delete_database(client: &Client, cfg: &ServeCfg, name: &str) -> Result<Value> {
+    let db = databases::load()
+        .into_iter()
+        .find(|d| d.name == name)
+        .ok_or_else(|| anyhow!("unknown database {name}"))?;
+    let _ = client.delete_tenant(&db.id); // ignore "unknown" — idempotent
+    proxy_route(cfg, name, false);
+    databases::remove(name)?;
+    Ok(json!({ "deleted": name }))
+}
+
+/// Create a **recovery branch** of a database — a copy-on-write snapshot at an
+/// LSN restore point. This is point-in-time recovery surfaced per database: the
+/// branch shares history up to `lsn` and diverges after.
+fn branch_database(client: &Client, _cfg: &ServeCfg, name: &str, body: &str) -> Result<Value> {
+    let db = databases::load()
+        .into_iter()
+        .find(|d| d.name == name)
+        .ok_or_else(|| anyhow!("unknown database {name}"))?;
+    let b = parse(body);
+    let branch = b
+        .get("branch")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("restore")
+        .to_string();
+    let lsn = b.get("lsn").and_then(|v| v.as_u64()).unwrap_or(0);
+    let timeline = databases::id_from_name(&format!("{name}/{branch}"));
+    ignore_conflict(client.branch(&timeline, ROOT_TIMELINE, lsn, Some(&db.id)))?;
+    Ok(json!({ "database": name, "branch": branch, "timeline": timeline, "lsn": lsn }))
+}
+
+/// Register (`add = true`) or deregister a tenant route on the proxy. Best-effort
+/// — does nothing when no proxy URL is configured.
+fn proxy_route(cfg: &ServeCfg, name: &str, add: bool) {
+    if let Some(base) = &cfg.proxy_url {
+        let url = format!("{}/tenants/{}", base.trim_end_matches('/'), name);
+        let _ = if add { ureq::post(&url).call() } else { ureq::request("DELETE", &url).call() };
+    }
 }
 
 /// List provisioned databases, tagging each with its provisioning status (from

@@ -18,6 +18,17 @@ pooling, control-plane auth, and full observability — on top of the 0.1.0 data
 plane.
 
 ### Added
+- **Automatic proxy routing**: the proxy's tenant registry is now dynamic — the
+  control API gains `POST`/`DELETE /tenants/<name>` and a `--backend-template`, so
+  a newly-provisioned database is routed **immediately, without `--tenant`
+  flags**. The console registers/deregisters routes on create/delete.
+- **Delete database (deprovision)**: the page server gains `DELETE
+  /v1/tenants/<id>` (+ `TenantManager::remove`, persisted); the console's
+  Databases view deletes a database — removing its tenant, proxy route, and local
+  record.
+- **Point-in-time recovery per database**: the Databases view re-surfaces
+  branching as a friendly **"Branch / restore point"** — name it, pick an LSN, and
+  get an instant copy-on-write snapshot that shares history up to that point.
 - **Compute lifecycle (start / hibernate)**: the proxy exposes an optional
   compute-control HTTP API (`--control-listen`) for per-tenant running state and
   start/stop, over the same activator the idle reaper uses. The console's

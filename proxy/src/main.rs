@@ -71,9 +71,16 @@ struct Args {
     metrics_listen: SocketAddr,
 
     /// Optional address for the compute-control HTTP API (per-tenant running
-    /// state + start/hibernate). When unset, the API is not served.
+    /// state, start/hibernate, and dynamic register/deregister). When unset, the
+    /// API is not served.
     #[arg(long, env = "SP_PROXY_CONTROL_LISTEN")]
     control_listen: Option<SocketAddr>,
+
+    /// Backend `host:port` template for tenants registered at runtime via the
+    /// control API (`{tenant}` is substituted). Enables automatic routing of
+    /// newly-provisioned databases without `--tenant` flags.
+    #[arg(long, env = "SP_PROXY_BACKEND_TEMPLATE", default_value = "127.0.0.1:5432")]
+    backend_template: String,
 
     /// PEM certificate-chain file for TLS termination. Set with --tls-key to
     /// accept TLS (`SSLRequest`) from clients; omit for plaintext only.
@@ -169,7 +176,11 @@ async fn main() -> anyhow::Result<()> {
         let control_listener = TcpListener::bind(addr)
             .await
             .with_context(|| format!("failed to bind control {addr}"))?;
-        tokio::spawn(proxy::control::serve_control(proxy.clone(), control_listener));
+        tokio::spawn(proxy::control::serve_control(
+            proxy.clone(),
+            args.backend_template.clone(),
+            control_listener,
+        ));
         info!(addr = %addr, "compute-control API ready");
     }
 
