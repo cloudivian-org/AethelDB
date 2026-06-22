@@ -77,6 +77,12 @@ pub fn helm_args(opts: &DeployOpts, chart_dir: &str) -> Vec<String> {
     args
 }
 
+/// Extract the embedded chart and return its path as a string — for callers that
+/// build their own `helm` invocation (e.g. the console's streaming apply).
+pub fn extract_chart_dir() -> Result<String> {
+    Ok(extract_chart()?.to_string_lossy().into_owned())
+}
+
 /// Extract the embedded chart to a fresh temp directory and return its path.
 fn extract_chart() -> Result<PathBuf> {
     let dir = std::env::temp_dir().join(format!("aethelctl-chart-{}", std::process::id()));

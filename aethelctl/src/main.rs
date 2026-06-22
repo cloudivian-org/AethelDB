@@ -138,8 +138,14 @@ enum Command {
     /// Launch the web console (operate the control plane + deploy from a browser).
     Serve {
         /// Address to serve the console on.
-        #[arg(long, default_value = "127.0.0.1:8088")]
+        #[arg(long, default_value = "127.0.0.1:8472")]
         listen: String,
+        /// Allow the console to run a real `helm` apply (not just dry-run previews).
+        #[arg(long)]
+        allow_apply: bool,
+        /// Grafana base URL to embed metrics panels in the Overview (optional).
+        #[arg(long, env = "AETHEL_GRAFANA_URL")]
+        grafana_url: Option<String>,
     },
 }
 
@@ -290,8 +296,13 @@ fn main() -> Result<()> {
             deploy::uninstall(&release, &namespace)?;
         }
 
-        Command::Serve { listen } => {
-            aethelctl::serve::serve(&listen, cli.server.clone(), cli.token.clone())?;
+        Command::Serve { listen, allow_apply, grafana_url } => {
+            let cfg = aethelctl::serve::ServeCfg {
+                control_url: cli.server.clone(),
+                allow_apply,
+                grafana_url,
+            };
+            aethelctl::serve::serve(&listen, cfg, cli.token.clone())?;
         }
     }
     Ok(())

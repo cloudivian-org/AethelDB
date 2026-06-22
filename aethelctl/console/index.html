@@ -110,6 +110,9 @@
       <div class="card" style="margin-top:16px"><h3>What you can do here</h3>
         <p class="muted">Create and isolate <b>tenants</b>, branch any timeline at any LSN (point-in-time recovery), run GC, and <b>deploy</b> a production cluster to on-prem or AWS / Azure / GCP — with autoscaling and availability best practices — from the Deploy tab.</p>
       </div>
+      <div class="card" id="metricsCard" style="margin-top:16px"><h3>Metrics</h3>
+        <div id="metricsBody"><p class="muted">Start the console with <code>--grafana-url &lt;url&gt;</code> to embed live Grafana panels here (see <code>deploy/monitoring/</code>).</p></div>
+      </div>
     </section>
 
     <!-- Tenants -->
@@ -186,6 +189,7 @@
         <div class="row">
           <button class="btn primary" onclick="previewDeploy()">Preview (dry-run)</button>
           <button class="btn" onclick="copyCmd()">Copy CLI command</button>
+          <button class="btn" id="applyBtn" style="display:none; border-color:var(--danger); color:var(--danger)" onclick="applyDeploy()">Apply ▶</button>
           <span class="note" id="dpHint">Preview runs <code>helm --dry-run</code> against your current kube-context. Nothing is applied.</span>
         </div>
       </div>
@@ -228,6 +232,13 @@ async function refreshAll() {
     $("#ovHealth").textContent = "OK"; $("#ovServer").textContent = s.server || "";
     $("#ovTenants").textContent = (s.tenants || []).length;
     $("#ovTimelines").textContent = (s.timelines || []).length;
+    $("#applyBtn").style.display = s.allowApply ? "inline-block" : "none";
+    $("#dpHint").innerHTML = s.allowApply
+      ? 'Preview runs <code>helm --dry-run</code>; <b>Apply</b> runs it for real against your kube-context.'
+      : 'Preview runs <code>helm --dry-run</code>. Restart with <code>--allow-apply</code> to enable Apply.';
+    if (s.grafanaUrl) {
+      $("#metricsBody").innerHTML = `<iframe src="${s.grafanaUrl}/d/aetheldb-overview/aetheldb-overview?kiosk&refresh=15s&theme=light" style="width:100%;height:540px;border:1px solid var(--line);border-radius:12px"></iframe>`;
+    }
   } catch (e) {
     $("#connPill").className = "pill bad"; $("#connText").textContent = "disconnected";
     $("#ovHealth").textContent = "—"; toast("Control plane unreachable: " + e.message, "err");
@@ -302,6 +313,18 @@ async function previewDeploy() {
 async function copyCmd() {
   try { const r = await api("POST", "/api/deploy/command", deployBody()); await navigator.clipboard.writeText(r.command); toast("CLI command copied", "ok"); }
   catch (e) { toast(e.message, "err"); }
+}
+async function applyDeploy() {
+  const b = deployBody();
+  if (!confirm(`Apply release "${b.release}" to namespace "${b.namespace}" on your current kube-context?\n\nThis runs helm for real.`)) return;
+  $("#dpResult").classList.remove("hidden"); $("#dpCmd").textContent = "helm upgrade --install (live)"; $("#dpOut").textContent = "applying…\n";
+  try {
+    const r = await fetch("/api/deploy/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+    if (!r.ok || !r.body) throw new Error(await r.text());
+    const reader = r.body.getReader(), dec = new TextDecoder(); let out = "";
+    while (true) { const { done, value } = await reader.read(); if (done) break; out += dec.decode(value, { stream: true }); $("#dpOut").textContent = out; $("#dpOut").scrollTop = $("#dpOut").scrollHeight; }
+    toast("Apply finished — check the output", "ok");
+  } catch (e) { $("#dpOut").textContent += "\n" + e.message; toast("Apply failed", "err"); }
 }
 
 refreshAll(); setInterval(refreshAll, 15000);

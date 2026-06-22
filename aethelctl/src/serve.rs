@@ -5,13 +5,16 @@
 //!
 //! A small blocking HTTP server (`tiny_http`) that serves an embedded
 //! single-page app and a JSON API. The API **proxies the control plane** (so the
-//! browser never needs the token) and renders **deploy dry-runs** via the
-//! embedded Helm chart. It runs on localhost by default — like `helm` or `k9s`,
-//! it acts with the operator's own `kubectl` context.
+//! browser never needs the token), renders **deploy dry-runs**, and — only when
+//! started with `--allow-apply` — **streams a real `helm` apply**. It runs on
+//! localhost by default and acts with the operator's own `kubectl` context, like
+//! `helm` or `k9s`.
+
+use std::process::{Command, Stdio};
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use tiny_http::{Header, Method, Response, Server};
+use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 use crate::deploy::{self, DeployOpts};
 use crate::Client;
@@ -22,18 +25,37 @@ const INDEX_HTML: &str = include_str!("../console/index.html");
 type Reply = (u16, String, &'static str);
 const JSON: &str = "application/json";
 
-/// Serve the console on `listen`, proxying control-plane calls to `control_url`.
-pub fn serve(listen: &str, control_url: String, token: Option<String>) -> Result<()> {
+/// Runtime configuration for the console.
+pub struct ServeCfg {
+    pub control_url: String,
+    /// Allow the GUI to run a *real* `helm` apply (not just a dry-run preview).
+    pub allow_apply: bool,
+    /// Optional Grafana base URL to embed metrics panels in the Overview.
+    pub grafana_url: Option<String>,
+}
+
+/// Serve the console on `listen`, proxying control-plane calls to the page server.
+pub fn serve(listen: &str, cfg: ServeCfg, token: Option<String>) -> Result<()> {
     let server = Server::http(listen).map_err(|e| anyhow!("binding {listen}: {e}"))?;
-    let client = Client::new(control_url.clone(), token);
+    let client = Client::new(cfg.control_url.clone(), token);
     println!("AethelDB console → http://{listen}");
-    println!("  control plane: {control_url}");
+    println!("  control plane: {}", cfg.control_url);
+    println!("  apply enabled: {}", cfg.allow_apply);
 
     for mut req in server.incoming_requests() {
         let method = req.method().clone();
         let url = req.url().to_string();
+        let path = url.split('?').next().unwrap_or("").to_string();
+
+        // The real apply streams helm's output as it runs — handled specially.
+        if method == Method::Post && path == "/api/deploy/apply" {
+            let body = read_body(&mut req);
+            stream_apply(req, &body, cfg.allow_apply);
+            continue;
+        }
+
         let body = read_body(&mut req);
-        let (status, payload, ctype) = route(&method, &url, &body, &client, &control_url);
+        let (status, payload, ctype) = route(&method, &url, &path, &body, &client, &cfg);
         let header = Header::from_bytes(&b"Content-Type"[..], ctype.as_bytes()).unwrap();
         let _ = req
             .respond(Response::from_string(payload).with_status_code(status).with_header(header));
@@ -43,17 +65,23 @@ pub fn serve(listen: &str, control_url: String, token: Option<String>) -> Result
 
 fn read_body(req: &mut tiny_http::Request) -> String {
     let mut s = String::new();
-    let _ = req.as_reader().read_to_string(&mut s);
+    let _ = std::io::Read::read_to_string(req.as_reader(), &mut s);
     s
 }
 
-fn route(method: &Method, url: &str, body: &str, client: &Client, control_url: &str) -> Reply {
-    let path = url.split('?').next().unwrap_or("");
+fn route(
+    method: &Method,
+    url: &str,
+    path: &str,
+    body: &str,
+    client: &Client,
+    cfg: &ServeCfg,
+) -> Reply {
     match (method, path) {
         (Method::Get, "/") | (Method::Get, "/index.html") => {
             (200, INDEX_HTML.to_string(), "text/html; charset=utf-8")
         }
-        (Method::Get, "/api/status") => api(status(client, control_url)),
+        (Method::Get, "/api/status") => api(status(client, cfg)),
         (Method::Get, "/api/tenants") => {
             api(client.list_tenants().map(|t| json!({ "tenants": t })))
         }
@@ -79,16 +107,21 @@ fn api(r: Result<Value>) -> Reply {
     }
 }
 
-fn status(client: &Client, control_url: &str) -> Result<Value> {
+fn status(client: &Client, cfg: &ServeCfg) -> Result<Value> {
     client.healthz()?;
     let tenants = client.list_tenants()?;
     let timelines = client.list_timelines(None)?;
-    Ok(json!({ "server": control_url, "tenants": tenants, "timelines": timelines }))
+    Ok(json!({
+        "server": cfg.control_url,
+        "tenants": tenants,
+        "timelines": timelines,
+        "allowApply": cfg.allow_apply,
+        "grafanaUrl": cfg.grafana_url,
+    }))
 }
 
 fn do_create_tenant(client: &Client, body: &str) -> Result<Value> {
-    let b = parse(body);
-    client.create_tenant(field(&b, "id")?)
+    client.create_tenant(field(&parse(body), "id")?)
 }
 fn do_create_timeline(client: &Client, body: &str) -> Result<Value> {
     let b = parse(body);
@@ -113,6 +146,47 @@ fn deploy_preview(body: &str) -> Result<Value> {
 fn deploy_command(body: &str) -> Result<Value> {
     let opts = deploy_opts(&parse(body), false);
     Ok(json!({ "command": deploy::command_preview(&opts) }))
+}
+
+/// Stream a real `helm upgrade --install` to the client as it runs. Gated on
+/// `--allow-apply` so a console started read-only can never mutate a cluster.
+fn stream_apply(req: tiny_http::Request, body: &str, allow_apply: bool) {
+    if !allow_apply {
+        let payload =
+            json!({ "error": "apply is disabled; restart `aethelctl serve` with --allow-apply" })
+                .to_string();
+        let header = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
+        let _ =
+            req.respond(Response::from_string(payload).with_status_code(403).with_header(header));
+        return;
+    }
+
+    let opts = deploy_opts(&parse(body), false);
+    let chart = match deploy::extract_chart_dir() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ =
+                req.respond(Response::from_string(format!("error: {e:#}")).with_status_code(500));
+            return;
+        }
+    };
+    // Merge stderr into stdout via a shell so the browser sees one stream.
+    let cmd = format!("helm {} 2>&1", deploy::helm_args(&opts, &chart).join(" "));
+    let child = Command::new("sh").arg("-c").arg(&cmd).stdout(Stdio::piped()).spawn();
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = req.respond(Response::from_string(format!("failed to run helm: {e}")));
+            return;
+        }
+    };
+    let stdout = child.stdout.take().unwrap();
+    let header =
+        Header::from_bytes(&b"Content-Type"[..], &b"text/plain; charset=utf-8"[..]).unwrap();
+    // data_length = None → chunked: tiny_http streams stdout as helm produces it.
+    let resp = Response::new(StatusCode(200), vec![header], stdout, None, None);
+    let _ = req.respond(resp);
+    let _ = child.wait(); // reap once the stream (and helm) finish
 }
 
 /// Map the console's deploy form to `DeployOpts` + chart `--set` overrides.
@@ -143,7 +217,7 @@ fn deploy_opts(b: &Value, dry_run: bool) -> DeployOpts {
         image_repo: s("imageRepo"),
         image_tag: s("imageTag"),
         expose: flag("expose") || !cloud.is_empty(),
-        wait: false,
+        wait: flag("wait"),
         dry_run,
     }
 }

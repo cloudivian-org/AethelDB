@@ -88,9 +88,10 @@ not a rewrite. The plan turns that into a one-liner.
 - A polished single-page console to **operate** (tenants, branches, PITR, GC over
   the control plane — the browser never holds the token) and **deploy** (on-prem /
   AWS / Azure / GCP, with autoscaling + PDB + topology-spread toggles and a live
-  `helm --dry-run` preview before apply). ✅
-- **Next:** stream a real apply with progress, embed Grafana panels, and offer
-  the console as a container in the Helm chart.
+  `helm --dry-run` preview). A real **streamed apply** is gated behind
+  `--allow-apply`, and `--grafana-url` embeds live Grafana panels. ✅
+- **Next:** offer the console as a container in the Helm chart, and add per-panel
+  Grafana embeds + apply history.
 
 ## Productization depth (parallel, ongoing)
 

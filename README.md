@@ -193,7 +193,7 @@ aethelctl deploy --cloud aws \                 # → any managed K8s (EKS/AKS/GK
 …or do all of it from a **web console**:
 
 ```bash
-aethelctl serve        # → http://127.0.0.1:8088
+aethelctl serve        # → http://127.0.0.1:8472
 ```
 
 A polished UI to **operate** (tenants, branches, PITR, GC) and **deploy** — pick
