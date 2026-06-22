@@ -190,6 +190,9 @@ Each subsystem has a focused design doc under [`docs/design/`](docs/design/):
 
 ## Status & roadmap
 
+See the full [**Roadmap**](ROADMAP.md) (including the cloud / BYOC deploy plan and
+the compatibility charter) and an honest [**comparison vs Neon & Supabase**](docs/comparison.md).
+
 **Done and tested:**
 
 - **Data path** — scale-to-zero proxy (TLS + SCRAM + `CancelRequest` routing),
