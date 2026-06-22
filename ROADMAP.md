@@ -93,6 +93,15 @@ not a rewrite. The plan turns that into a one-liner.
 - **Next:** offer the console as a container in the Helm chart, and add per-panel
   Grafana embeds + apply history.
 
+## Release & distribution
+
+- **Container images + chart** — ✅ a release workflow builds/pushes the three
+  service images (multi-arch) to GHCR and publishes the Helm chart as an OCI
+  artifact on each tag; the chart defaults to those images so deploys need no
+  `--image-repo`. (Runs once the org's Actions are billing-enabled.)
+- **Next:** attach prebuilt `aethelctl` binaries to the GitHub release;
+  Marketplace images.
+
 ## Productization depth (parallel, ongoing)
 
 Each is additive and independently shippable:

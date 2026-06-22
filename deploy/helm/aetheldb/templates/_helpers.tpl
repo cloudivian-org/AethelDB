@@ -13,10 +13,12 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: aetheldb-{{ .Chart.Version }}
 {{- end -}}
 
-{{/* Per-service image reference. Usage: include "aetheldb.image" (dict "svc" "pageserver" "root" $) */}}
+{{/* Per-service image reference. Usage: include "aetheldb.image" (dict "svc" "pageserver" "root" $).
+     An empty image.tag falls back to the chart's appVersion. */}}
 {{- define "aetheldb.image" -}}
 {{- $img := .root.Values.image -}}
-{{- printf "%s/%s/%s:%s" $img.registry $img.repository .svc $img.tag -}}
+{{- $tag := $img.tag | default .root.Chart.AppVersion -}}
+{{- printf "%s/%s/%s:%s" $img.registry $img.repository .svc $tag -}}
 {{- end -}}
 
 {{/* The Secret holding object-store credentials and the control token. */}}

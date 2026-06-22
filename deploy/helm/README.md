@@ -21,16 +21,24 @@ client ──▶ proxy (scale-to-zero) ──▶ compute (PostgreSQL)
 ## Prerequisites
 
 - A Kubernetes cluster and `helm` 3.8+ / 4.x.
-- Service container images published as `<registry>/<repo>/{proxy,safekeeper,pageserver}:<tag>`.
-  Build them from `deploy/Dockerfile.rust` (one image per `BIN`) and push to your
-  registry; set `image.registry` / `image.repository` / `image.tag`.
 - A bucket/container in your cloud, plus credentials.
+- **Images:** the chart defaults to the official images published by the release
+  workflow — `ghcr.io/cloudivian-org/aetheldb/{proxy,safekeeper,pageserver}`, tagged
+  with the chart's appVersion. No build step needed for a release. To run an
+  unreleased or private build, build from `deploy/Dockerfile.rust` (one image per
+  `BIN`), push to your registry, and override `image.registry` /
+  `image.repository` / `image.tag`.
 
 ## Quickstart
 
 ```bash
+# Uses the published GHCR images by default:
 helm install aethel deploy/helm/aetheldb \
   --namespace aethel --create-namespace \
+  --set objectStore.url=s3://my-bucket -f my-values.yaml
+
+# …or point at your own registry:
+helm install aethel deploy/helm/aetheldb \
   --set image.registry=ghcr.io --set image.repository=you/aetheldb --set image.tag=v0.2.0 \
   -f my-values.yaml
 ```

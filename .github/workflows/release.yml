@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Build and publish the service container images and the Helm chart on a release
+# tag (or manual dispatch), so `aethelctl deploy` and the chart pull ready-made
+# images with no --image-repo. Images go to GHCR under
+# ghcr.io/<owner>/aetheldb/{proxy,safekeeper,pageserver}; the chart to
+# oci://ghcr.io/<owner>/charts/aetheldb. Uses the built-in GITHUB_TOKEN — no
+# extra secrets.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. v0.2.1"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    name: image (${{ matrix.bin }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        bin: [aethel-proxy, aethel-safekeeper, aethel-pageserver]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version and image name
+        id: meta
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"                       # strip leading v
+          SVC="${{ matrix.bin }}"; SVC="${SVC#aethel-}" # proxy|safekeeper|pageserver
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"          # lowercase for GHCR
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$OWNER/aetheldb/$SVC" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.rust
+          build-args: BIN=${{ matrix.bin }}
+          # arm64 builds under emulation are slow; trim to linux/amd64 if needed.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+  chart:
+    name: helm chart
+    runs-on: ubuntu-latest
+    needs: images
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Package and push the chart (OCI)
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          helm package deploy/helm/aetheldb --version "$VERSION" --app-version "$VERSION"
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push "aetheldb-$VERSION.tgz" "oci://ghcr.io/$OWNER/charts"
