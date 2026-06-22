@@ -18,6 +18,10 @@ pooling, control-plane auth, and full observability — on top of the 0.1.0 data
 plane.
 
 ### Added
+- **`aethelctl` CLI**: a scriptable client over the control plane —
+  `status` / `tenant` / `timeline` / `branch` (alias `pitr`) / `receive` / `gc`,
+  with `--json` output and bearer-token auth. A new binary; the engine is
+  unchanged.
 - **Deploy to any cloud**: the page server offloads to **AWS S3 / Azure Blob /
   GCS** via `--object-store-url` (one binary, env-resolved credentials), plus a
   **Helm chart** (`deploy/helm/`) for EKS/AKS/GKE — server-side validated against

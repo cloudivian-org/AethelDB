@@ -15,6 +15,7 @@ members = [
     "proxy",      # Step 2: scale-to-zero activation proxy (Tokio TCP)
     "safekeeper", # Step 4: WAL ingest + consensus durability buffer
     "pageserver", # Step 5: LSM-style page reconstruction + S3 offload
+    "aethelctl",  # CLI over the control plane + cloud deploy
 ]
 
 # Settings inherited by every member crate via `<field>.workspace = true`.
