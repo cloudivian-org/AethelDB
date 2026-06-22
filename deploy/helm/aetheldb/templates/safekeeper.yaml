@@ -40,6 +40,7 @@ spec:
         prometheus.io/port: "9500"
       {{- end }}
     spec:
+      {{- include "aetheldb.topologySpread" (dict "root" $ "component" "safekeeper") | nindent 6 }}
       containers:
         - name: safekeeper
           image: {{ include "aetheldb.image" (dict "svc" "safekeeper" "root" $) }}

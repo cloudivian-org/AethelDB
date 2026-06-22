@@ -86,3 +86,34 @@ pooling:
 # Prometheus scrape annotations on every pod.
 metrics:
   annotations: true
+
+# ---------------------------------------------------------------------------
+# Autoscaling & availability best practices (all opt-in; defaults preserve
+# current single-replica behavior).
+# ---------------------------------------------------------------------------
+
+# Horizontal Pod Autoscaler for the stateless proxy (the safekeeper and page
+# server are stateful and scaled deliberately, not by an HPA).
+autoscaling:
+  proxy:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+# Keep a quorum / ingress available during node drains and rolling upgrades.
+podDisruptionBudget:
+  safekeeper:
+    enabled: false
+    minAvailable: 2 # for a 3-replica quorum, tolerate one disruption
+  proxy:
+    enabled: false
+    minAvailable: 1
+
+# Spread pods across nodes (and zones) so a single failure can't take the
+# quorum or all proxies down at once.
+topologySpread:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
