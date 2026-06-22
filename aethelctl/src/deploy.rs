@@ -96,6 +96,33 @@ pub fn deploy(opts: &DeployOpts, chart_override: Option<&str>) -> Result<()> {
     run("helm", &helm_args(opts, &chart_dir))
 }
 
+/// Like [`deploy`], but **captures** helm's output instead of inheriting stdio
+/// — used by the web console's deploy preview (always pass `dry_run = true`).
+pub fn deploy_capture(opts: &DeployOpts, chart_override: Option<&str>) -> Result<String> {
+    let chart_dir = match chart_override {
+        Some(c) => c.to_string(),
+        None => extract_chart()?.to_string_lossy().into_owned(),
+    };
+    let out = Command::new("helm")
+        .args(helm_args(opts, &chart_dir))
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run `helm` (installed and on PATH?): {e}"))?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let err = String::from_utf8_lossy(&out.stderr);
+    if !err.trim().is_empty() {
+        text.push_str(&err);
+    }
+    if !out.status.success() {
+        bail!("helm exited with {}:\n{text}", out.status);
+    }
+    Ok(text)
+}
+
+/// The equivalent `aethelctl deploy` / `helm` command line, for display.
+pub fn command_preview(opts: &DeployOpts) -> String {
+    format!("helm {}", helm_args(opts, "<chart>").join(" "))
+}
+
 /// Run `helm uninstall <release> -n <namespace>`.
 pub fn uninstall(release: &str, namespace: &str) -> Result<()> {
     run("helm", &["uninstall".into(), release.into(), "--namespace".into(), namespace.into()])

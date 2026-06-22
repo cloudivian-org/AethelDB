@@ -190,6 +190,17 @@ aethelctl deploy --cloud aws \                 # → any managed K8s (EKS/AKS/GK
   --image-repo ghcr.io/you/aetheldb --image-tag v0.2.0
 ```
 
+…or do all of it from a **web console**:
+
+```bash
+aethelctl serve        # → http://127.0.0.1:8088
+```
+
+A polished UI to **operate** (tenants, branches, PITR, GC) and **deploy** — pick
+on-prem / AWS / Azure / GCP, toggle autoscaling + availability best practices,
+and preview a live `helm --dry-run` before you apply. The browser never sees the
+control token; the local server proxies it.
+
 Every control-plane command takes `--json` for scripting.
 
 ### Metrics

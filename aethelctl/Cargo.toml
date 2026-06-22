@@ -27,6 +27,8 @@ serde_json = "1"
 ureq = { version = "2.9", features = ["json"] }
 # Embed the Helm chart into the binary so `aethelctl deploy` works anywhere.
 include_dir = "0.7"
+# Tiny blocking HTTP server for the `aethelctl serve` web console.
+tiny_http = "0.12"
 
 [dev-dependencies]
 # Integration tests drive a real page-server HTTP control plane in-process.

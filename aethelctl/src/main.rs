@@ -134,6 +134,13 @@ enum Command {
         #[arg(long, default_value = "aethel")]
         namespace: String,
     },
+
+    /// Launch the web console (operate the control plane + deploy from a browser).
+    Serve {
+        /// Address to serve the console on.
+        #[arg(long, default_value = "127.0.0.1:8088")]
+        listen: String,
+    },
 }
 
 /// Cloud presets for `deploy`.
@@ -281,6 +288,10 @@ fn main() -> Result<()> {
         }
         Command::Uninstall { release, namespace } => {
             deploy::uninstall(&release, &namespace)?;
+        }
+
+        Command::Serve { listen } => {
+            aethelctl::serve::serve(&listen, cli.server.clone(), cli.token.clone())?;
         }
     }
     Ok(())

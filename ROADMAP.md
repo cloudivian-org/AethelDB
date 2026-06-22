@@ -83,10 +83,14 @@ not a rewrite. The plan turns that into a one-liner.
   an operator (built on the existing Kubernetes activator). GitOps-friendly
   fleet management.
 
-### Phase 4 — Web console (GUI)
-*A thin client over the control-plane API + embedded Grafana.*
-- Tenants, a visual branch tree, PITR, and live metrics — behind auth. Optionally
-  shipped as a container in the Helm chart.
+### Phase 4 — Web console (GUI) — ✅ shipped (initial)
+*Served by `aethelctl serve`; embedded in the binary.*
+- A polished single-page console to **operate** (tenants, branches, PITR, GC over
+  the control plane — the browser never holds the token) and **deploy** (on-prem /
+  AWS / Azure / GCP, with autoscaling + PDB + topology-spread toggles and a live
+  `helm --dry-run` preview before apply). ✅
+- **Next:** stream a real apply with progress, embed Grafana panels, and offer
+  the console as a container in the Helm chart.
 
 ## Productization depth (parallel, ongoing)
 
