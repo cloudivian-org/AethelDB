@@ -23,12 +23,14 @@ plane.
   publishes the Helm chart as an OCI artifact on each release tag. The chart now
   **defaults to those images** (`ghcr.io/<owner>/aetheldb/*`, appVersion tag), so
   `helm install` / `aethelctl deploy` need no `--image-repo`.
-- **Web console** (`aethelctl serve`): an embedded single-page GUI to operate
-  (tenants, branches, PITR, GC) and **deploy** (on-prem / AWS / Azure / GCP, with
-  autoscaling + availability toggles and a live `helm --dry-run` preview). The
-  browser never holds the control token — the local server proxies it. A real
-  **streamed apply** is available behind `--allow-apply`, and `--grafana-url`
-  embeds live Grafana panels in the Overview.
+- **Web console** (`aethelctl serve`): a provisioning-first, embedded single-page
+  GUI. **Databases** — create a database by *name* and get a connection string
+  instantly (a friendly layer over tenants; the engine is unchanged). **Deploy**
+  — on-prem / AWS / Azure / GCP from presets, with a live `helm --dry-run`
+  preview and an optional streamed real apply (`--allow-apply`). `--grafana-url`
+  embeds live Grafana panels. The browser never holds the control token. (The
+  earlier low-level Tenants / Branches & PITR views were removed from the GUI in
+  favor of the database/deploy flows.)
 - **Helm autoscaling & availability** (opt-in): HPA for the proxy,
   PodDisruptionBudgets, and topology spread.
 - **`aethelctl` CLI**: a scriptable client over the control plane —
