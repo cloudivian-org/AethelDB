@@ -10,7 +10,6 @@
 //! script / Docker CLI" path) and [`NoopActivator`] (compute managed
 //! externally, used in tests).
 
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -100,7 +99,7 @@ impl Activator for NoopActivator {
 /// to catch the backend the instant it begins listening. Returns the elapsed
 /// time to ready on success.
 pub async fn wait_until_ready(
-    addr: SocketAddr,
+    addr: &str,
     budget: Duration,
     interval: Duration,
 ) -> anyhow::Result<Duration> {
@@ -151,8 +150,8 @@ mod tests {
     #[tokio::test]
     async fn wait_until_ready_resolves_when_listener_is_up() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let elapsed = wait_until_ready(addr, Duration::from_millis(500), Duration::from_millis(5))
+        let addr = listener.local_addr().unwrap().to_string();
+        let elapsed = wait_until_ready(&addr, Duration::from_millis(500), Duration::from_millis(5))
             .await
             .unwrap();
         assert!(elapsed < Duration::from_millis(500));
@@ -161,9 +160,9 @@ mod tests {
     #[tokio::test]
     async fn wait_until_ready_times_out_on_dead_address() {
         // 127.0.0.1:1 is reserved and refuses connections immediately.
-        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
         let res =
-            wait_until_ready(addr, Duration::from_millis(80), Duration::from_millis(10)).await;
+            wait_until_ready("127.0.0.1:1", Duration::from_millis(80), Duration::from_millis(10))
+                .await;
         assert!(res.is_err());
     }
 }

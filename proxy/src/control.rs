@@ -17,7 +17,6 @@
 //! * `POST   /tenants/<name>/start`     — wake compute
 //! * `POST   /tenants/<name>/stop`      — hibernate (scale to zero)
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -121,23 +120,22 @@ fn list_tenants(proxy: &Arc<Proxy>) -> String {
 }
 
 /// Register a tenant route, deriving its backend from the template. Idempotent.
+/// The backend is a `host:port` string (a DNS name is resolved at connect).
 fn register(proxy: &Arc<Proxy>, tmpl: &str, name: &str) -> (u16, String) {
     let backend = tmpl.replace("{tenant}", name);
-    match backend.parse::<SocketAddr>() {
-        Ok(addr) => {
-            // Start "asleep" so the first connection wakes compute via the activator.
-            proxy.registry().register(name, TenantState::new(addr, false));
-            debug!(tenant = name, %addr, "registered tenant route");
-            (200, format!(r#"{{"tenant":{},"backend":{}}}"#, json_str(name), json_str(&backend)))
-        }
-        Err(_) => (
+    if !backend.contains(':') {
+        return (
             400,
             format!(
                 r#"{{"error":{}}}"#,
                 json_str(&format!("backend {backend:?} is not host:port"))
             ),
-        ),
+        );
     }
+    // Start "asleep" so the first connection wakes compute via the activator.
+    proxy.registry().register(name, TenantState::new(backend.clone(), false));
+    debug!(tenant = name, backend = %backend, "registered tenant route");
+    (200, format!(r#"{{"tenant":{},"backend":{}}}"#, json_str(name), json_str(&backend)))
 }
 
 /// Deregister a tenant route.

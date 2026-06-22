@@ -73,8 +73,10 @@ async fn spawn_echo_backend() -> SocketAddr {
 #[tokio::test]
 async fn terminates_tls_and_splices_to_backend() {
     let backend = spawn_echo_backend().await;
-    let registry =
-        Arc::new(Registry::from_iter([("echo".to_string(), TenantState::new(backend, true))]));
+    let registry = Arc::new(Registry::from_iter([(
+        "echo".to_string(),
+        TenantState::new(backend.to_string(), true),
+    )]));
 
     // A self-signed cert for "localhost".
     let ck = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
@@ -130,8 +132,10 @@ async fn terminates_tls_and_splices_to_backend() {
 #[tokio::test]
 async fn declines_tls_when_not_configured() {
     let backend = spawn_echo_backend().await;
-    let registry =
-        Arc::new(Registry::from_iter([("echo".to_string(), TenantState::new(backend, true))]));
+    let registry = Arc::new(Registry::from_iter([(
+        "echo".to_string(),
+        TenantState::new(backend.to_string(), true),
+    )]));
     // No TLS configured -> the proxy must decline with 'N' and still work plaintext.
     let proxy =
         Proxy::new(registry, Arc::new(proxy::activator::NoopActivator), HealthConfig::default());

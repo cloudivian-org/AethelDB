@@ -167,7 +167,7 @@ impl Proxy {
         };
         // Best-effort: a cancel is advisory. Connect, send the verbatim packet,
         // and close; failures are logged, not surfaced to the (already-gone) client.
-        match TcpStream::connect(backend_addr).await {
+        match TcpStream::connect(backend_addr.as_str()).await {
             Ok(mut backend) => {
                 let bytes = protocol::cancel_request_bytes(process_id, secret_key);
                 if let Err(err) = backend.write_all(&bytes).await {
@@ -250,8 +250,9 @@ impl Proxy {
         self.ensure_awake(&tenant_name, &state).await?;
 
         // --- 4. Connect to the backend, replay startup, and splice. ---
-        let backend_addr = state.backend();
-        let mut backend = TcpStream::connect(backend_addr)
+        // `host:port` (a DNS name resolves here); owned so it can outlive the splice.
+        let backend_addr = state.backend().to_string();
+        let mut backend = TcpStream::connect(backend_addr.as_str())
             .await
             .with_context(|| format!("connecting to backend {backend_addr}"))?;
         backend.write_all(&startup.raw).await.context("forwarding startup packet to backend")?;
@@ -262,7 +263,7 @@ impl Proxy {
         info!(%peer, tenant = %tenant_name, %backend_addr, "splicing connection");
 
         let (c2b, b2c) = self
-            .splice_capturing_cancel_key(&mut client, &mut backend, backend_addr)
+            .splice_capturing_cancel_key(&mut client, &mut backend, &backend_addr)
             .await
             .context("while proxying client <-> backend")?;
         debug!(%peer, tenant = %tenant_name, client_to_backend = c2b, backend_to_client = b2c, "connection finished");
@@ -278,7 +279,7 @@ impl Proxy {
         self: &Arc<Self>,
         client: &mut S,
         backend: &mut TcpStream,
-        backend_addr: SocketAddr,
+        backend_addr: &str,
     ) -> std::io::Result<(u64, u64)>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,

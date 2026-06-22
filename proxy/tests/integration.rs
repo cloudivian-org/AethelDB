@@ -157,7 +157,7 @@ async fn splices_client_to_running_backend() {
     let backend = spawn_echo_backend().await;
     let registry = Arc::new(Registry::from_iter([(
         "echo".to_string(),
-        TenantState::new(backend, true), // already running
+        TenantState::new(backend.to_string(), true), // already running
     )]));
     let proxy = Proxy::new(registry, Arc::new(NoopActivator), HealthConfig::default());
     let proxy_addr = spawn_proxy(proxy).await;
@@ -197,7 +197,7 @@ async fn cold_start_invokes_activator() {
 
     let registry = Arc::new(Registry::from_iter([(
         "sleepy".to_string(),
-        TenantState::new(backend, false), // begins asleep -> must be woken
+        TenantState::new(backend.to_string(), false), // begins asleep -> must be woken
     )]));
     let proxy = Proxy::new(registry, Arc::new(activator), HealthConfig::default());
     let proxy_addr = spawn_proxy(proxy).await;
@@ -220,8 +220,10 @@ async fn cold_start_invokes_activator() {
 #[tokio::test]
 async fn routes_cancel_request_to_owning_backend() {
     let (backend, mut cancels) = spawn_keyed_backend(4242, 2024).await;
-    let registry =
-        Arc::new(Registry::from_iter([("echo".to_string(), TenantState::new(backend, true))]));
+    let registry = Arc::new(Registry::from_iter([(
+        "echo".to_string(),
+        TenantState::new(backend.to_string(), true),
+    )]));
     let proxy = Proxy::new(registry, Arc::new(NoopActivator), HealthConfig::default());
     let proxy_addr = spawn_proxy(proxy).await;
 

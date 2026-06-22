@@ -97,8 +97,10 @@ fn parse_tenant(spec: &str) -> anyhow::Result<(String, TenantState)> {
     let (name, addr) = spec
         .split_once('=')
         .with_context(|| format!("tenant spec `{spec}` must be NAME=host:port"))?;
-    let addr: SocketAddr =
-        addr.parse().with_context(|| format!("invalid backend address in tenant spec `{spec}`"))?;
+    anyhow::ensure!(
+        addr.contains(':'),
+        "backend in tenant spec `{spec}` must be host:port (a DNS name is allowed)"
+    );
     // Start asleep: the first connection triggers the activator + readiness probe.
     Ok((name.to_owned(), TenantState::new(addr, false)))
 }

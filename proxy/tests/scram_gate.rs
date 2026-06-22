@@ -91,7 +91,7 @@ fn setup(backend: SocketAddr) -> (Arc<Proxy>, Arc<AtomicBool>) {
     let secret = ScramSecret::from_password("hunter2", b"tenant-salt-123", 4096);
     let registry = Arc::new(Registry::from_iter([(
         "db".to_string(),
-        TenantState::with_scram(backend, false, secret), // asleep
+        TenantState::with_scram(backend.to_string(), false, secret), // asleep
     )]));
     let started = Arc::new(AtomicBool::new(false));
     let activator = Arc::new(RecordingActivator { started: started.clone() });

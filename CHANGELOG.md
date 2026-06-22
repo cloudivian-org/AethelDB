@@ -17,6 +17,12 @@ The operational-layer release: multi-tenancy with a durable catalog, optional
 pooling, control-plane auth, and full observability — on top of the 0.1.0 data
 plane.
 
+### Changed
+- **DNS backends**: a tenant's backend is now a `host:port` string resolved at
+  connect, so the proxy (and the auto-routing `--backend-template`, e.g.
+  `compute-{tenant}:5432`) work with **Kubernetes Service DNS names**, not just
+  IPs.
+
 ### Added
 - **Automatic proxy routing**: the proxy's tenant registry is now dynamic — the
   control API gains `POST`/`DELETE /tenants/<name>` and a `--backend-template`, so
