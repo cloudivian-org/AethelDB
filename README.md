@@ -167,6 +167,22 @@ curl -XPOST localhost:6403/v1/gc          -d '{"horizon_lsn":4000}'
 curl       'localhost:6403/v1/timelines?tenant=<hex>'   # omit ?tenant for the root tenant
 ```
 
+### `aethelctl` (CLI)
+
+The same control plane, as a scriptable CLI (`aethelctl`) instead of raw `curl`:
+
+```bash
+export AETHEL_SERVER=http://localhost:6403   # and AETHEL_TOKEN=… if auth is on
+aethelctl status                              # health + tenant/timeline summary
+aethelctl tenant create <32-hex>
+aethelctl timeline create <32-hex> --tenant <hex>
+aethelctl pitr <new-hex> --from <parent-hex> --lsn 5000 --tenant <hex>   # branch = PITR
+aethelctl gc 4000 --tenant <hex> --json
+```
+
+Every command takes `--json` for scripting. See [`ROADMAP.md`](ROADMAP.md) for the
+`aethelctl deploy --cloud …` work.
+
 ### Metrics
 
 ```bash

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+
+[package]
+name = "aethelctl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Command-line interface for AethelDB: control plane (tenants, branches, PITR, GC) and cloud deploy."
+
+[lib]
+name = "aethelctl"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aethelctl"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = "1"
+# Small blocking HTTP client — a CLI doesn't need an async runtime.
+ureq = { version = "2.9", features = ["json"] }
+
+[dev-dependencies]
+# Integration tests drive a real page-server HTTP control plane in-process.
+tokio = { workspace = true }
+pageserver = { path = "../pageserver" }
