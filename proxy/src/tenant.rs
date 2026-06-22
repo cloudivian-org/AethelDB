@@ -115,40 +115,48 @@ impl TenantState {
 /// swap is localized.
 #[derive(Debug, Default)]
 pub struct Registry {
-    tenants: HashMap<String, std::sync::Arc<TenantState>>,
+    tenants: std::sync::RwLock<HashMap<String, std::sync::Arc<TenantState>>>,
 }
 
 impl FromIterator<(String, TenantState)> for Registry {
     /// Build a registry from `(name, state)` pairs.
     fn from_iter<I: IntoIterator<Item = (String, TenantState)>>(entries: I) -> Self {
-        Registry {
-            tenants: entries
-                .into_iter()
-                .map(|(name, state)| (name, std::sync::Arc::new(state)))
-                .collect(),
-        }
+        let map =
+            entries.into_iter().map(|(name, state)| (name, std::sync::Arc::new(state))).collect();
+        Registry { tenants: std::sync::RwLock::new(map) }
     }
 }
 
 impl Registry {
     /// Look up a tenant by name.
     pub fn get(&self, tenant: &str) -> Option<std::sync::Arc<TenantState>> {
-        self.tenants.get(tenant).cloned()
+        self.tenants.read().unwrap().get(tenant).cloned()
     }
 
-    /// Iterate over `(name, state)` for the reaper.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &std::sync::Arc<TenantState>)> {
-        self.tenants.iter().map(|(name, state)| (name.as_str(), state))
+    /// A snapshot of `(name, state)` pairs (used by the reaper and control API).
+    pub fn tenants(&self) -> Vec<(String, std::sync::Arc<TenantState>)> {
+        self.tenants.read().unwrap().iter().map(|(n, s)| (n.clone(), s.clone())).collect()
+    }
+
+    /// Register (or replace) a tenant route at runtime — the basis for automatic
+    /// routing of newly-provisioned databases.
+    pub fn register(&self, name: impl Into<String>, state: TenantState) {
+        self.tenants.write().unwrap().insert(name.into(), std::sync::Arc::new(state));
+    }
+
+    /// Remove a tenant route; returns whether it existed.
+    pub fn remove(&self, name: &str) -> bool {
+        self.tenants.write().unwrap().remove(name).is_some()
     }
 
     /// Number of registered tenants.
     pub fn len(&self) -> usize {
-        self.tenants.len()
+        self.tenants.read().unwrap().len()
     }
 
     /// Whether the registry is empty.
     pub fn is_empty(&self) -> bool {
-        self.tenants.is_empty()
+        self.tenants.read().unwrap().is_empty()
     }
 }
 

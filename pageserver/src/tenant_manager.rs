@@ -135,6 +135,13 @@ impl TenantManager {
         Ok(tenant)
     }
 
+    /// Remove (deprovision) a tenant, returning whether it existed. The tenant's
+    /// in-memory timelines are dropped; its object-store layers are reclaimed by
+    /// GC separately.
+    pub fn remove(&self, id: TenantId) -> bool {
+        self.tenants.write().unwrap().remove(&id).is_some()
+    }
+
     /// Ids of every provisioned tenant.
     pub fn tenant_ids(&self) -> Vec<TenantId> {
         self.tenants.read().unwrap().keys().copied().collect()

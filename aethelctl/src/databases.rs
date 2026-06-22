@@ -64,6 +64,18 @@ pub fn save(dbs: &[Database]) -> Result<()> {
     Ok(())
 }
 
+/// Forget a database name from the registry, returning its entry if present.
+pub fn remove(name: &str) -> Result<Option<Database>> {
+    let mut dbs = load();
+    if let Some(pos) = dbs.iter().position(|d| d.name == name) {
+        let db = dbs.remove(pos);
+        save(&dbs)?;
+        Ok(Some(db))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Record a database name (idempotent), returning its entry.
 pub fn upsert(name: &str) -> Result<Database> {
     let name = name.trim().to_string();

@@ -121,6 +121,11 @@ impl Client {
         self.run(self.request("POST", "/v1/timelines/receive"), Some(body))
     }
 
+    /// `DELETE /v1/tenants/<id>` — deprovision a tenant.
+    pub fn delete_tenant(&self, id: &str) -> Result<Value> {
+        self.run(self.request("DELETE", &format!("/v1/tenants/{id}")), None)
+    }
+
     /// `POST /v1/gc` — compact + branch-aware GC below `horizon_lsn`.
     pub fn gc(&self, horizon_lsn: u64, tenant: Option<&str>) -> Result<Value> {
         let mut body = json!({ "horizon_lsn": horizon_lsn });

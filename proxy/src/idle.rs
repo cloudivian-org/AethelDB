@@ -40,9 +40,9 @@ pub async fn reap_once(proxy: &Arc<Proxy>, idle_after: Duration) {
     // Collect first so we don't hold any registry iterator across an await.
     let reapable: Vec<(String, Arc<crate::tenant::TenantState>)> = proxy
         .registry()
-        .iter()
+        .tenants()
+        .into_iter()
         .filter(|(_, state)| state.is_reapable(idle_after))
-        .map(|(name, state)| (name.to_owned(), state.clone()))
         .collect();
 
     for (name, state) in reapable {

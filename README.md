@@ -198,9 +198,10 @@ aethelctl serve        # → http://127.0.0.1:8472
 
 A polished, provisioning-first UI:
 - **Databases** — create a database by *name* and get a connection string
-  instantly (serverless by default — nothing to size), à la Neon/Supabase but
-  self-hosted. See which are **running** vs **hibernated** (scaled to zero) and
-  **Start / Hibernate** them — backed by the proxy's real compute-control API.
+  instantly (serverless by default — nothing to size, and routed automatically),
+  à la Neon/Supabase but self-hosted. See which are **running** vs **hibernated**
+  and **Start / Hibernate** them, take a **point-in-time restore branch**, and
+  **delete** — all backed by real engine APIs.
 - **Deploy** — stand up a cluster on-prem or in your own cloud (AWS / Azure /
   GCP) from presets (Local / Production), with a live `helm --dry-run` preview
   and an optional real apply (`--allow-apply`).

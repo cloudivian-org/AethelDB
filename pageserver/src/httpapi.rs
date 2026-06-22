@@ -93,8 +93,8 @@ async fn handle(
     } else {
         route(&tenants, store.as_ref(), &method, path, query, &body).await
     };
-    // A 201 means a tenant/timeline/branch was created — persist the topology.
-    if status == 201 {
+    // A successful create (201) or delete changes the topology — persist it.
+    if status == 201 || (method == "DELETE" && (200..300).contains(&status)) {
         tenants.persist().await;
     }
     let reason = if (200..300).contains(&status) { "OK" } else { "Error" };
@@ -172,6 +172,19 @@ async fn route(
     query: &str,
     body: &[u8],
 ) -> (u16, String) {
+    // DELETE /v1/tenants/<id> — deprovision a tenant.
+    if method == "DELETE" {
+        if let Some(id) = path.strip_prefix("/v1/tenants/") {
+            let Ok(tid) = id.parse::<TenantId>() else {
+                return err(400, "tenant id must be 32 hex chars");
+            };
+            return if tenants.remove(tid) {
+                (200, serde_json::json!({ "deleted": tid.to_string() }).to_string())
+            } else {
+                err(404, format!("unknown tenant {tid}"))
+            };
+        }
+    }
     match (method, path) {
         ("GET", "/healthz") => (200, r#"{"status":"ok"}"#.to_string()),
 
