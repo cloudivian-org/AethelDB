@@ -11,6 +11,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Per-database metrics & charts** in the console: each database has a **📈
+  Metrics** view with tiles (active now, peak, connections/cold-starts in the
+  last hour) and native sparklines (connections/sec, active, compute up-vs-
+  hibernated, cold starts). The headline is the **scale-to-zero economics** —
+  *compute uptime* and *saved by scale-to-zero* — signals an always-on database
+  (Aurora/RDS) can't show. Backed by new per-database (labelled) proxy metrics
+  (`aethel_proxy_database_*`) and a Prometheus query proxy in `aethelctl serve`
+  (`--prometheus-url`). Fully additive: no `--prometheus-url`, no charts; the
+  engine and existing metrics are unchanged.
+
 ## [0.2.0] - 2026-06-21
 
 The operational-layer release: multi-tenancy with a durable catalog, optional

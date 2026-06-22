@@ -158,6 +158,7 @@ async fn set_compute(proxy: &Arc<Proxy>, name: &str, start: bool) -> (u16, Strin
     match result {
         Ok(()) => {
             state.set_running(start);
+            crate::metrics::set_compute_up(name, start);
             if start {
                 state.touch();
             }

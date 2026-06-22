@@ -7,7 +7,59 @@
 //! [`common::metrics::serve_metrics`].
 
 use once_cell::sync::Lazy;
-use prometheus::{register_int_counter, register_int_gauge, IntCounter, IntGauge};
+use prometheus::{
+    register_int_counter, register_int_counter_vec, register_int_gauge, register_int_gauge_vec,
+    IntCounter, IntCounterVec, IntGauge, IntGaugeVec,
+};
+
+// ---- Per-database (labelled) metrics — the basis for the console's per-database
+// charts. Cardinality is bounded by the number of databases. ----
+
+/// Client connections spliced, per database.
+pub static DB_CONNECTIONS: Lazy<IntCounterVec> = Lazy::new(|| {
+    register_int_counter_vec!(
+        "aethel_proxy_database_connections_total",
+        "Client connections spliced, per database",
+        &["database"]
+    )
+    .unwrap()
+});
+
+/// Connections currently splicing, per database.
+pub static DB_ACTIVE: Lazy<IntGaugeVec> = Lazy::new(|| {
+    register_int_gauge_vec!(
+        "aethel_proxy_database_active_connections",
+        "Connections currently splicing, per database",
+        &["database"]
+    )
+    .unwrap()
+});
+
+/// Cold starts (wakes) triggered, per database.
+pub static DB_WAKES: Lazy<IntCounterVec> = Lazy::new(|| {
+    register_int_counter_vec!(
+        "aethel_proxy_database_wakes_total",
+        "Compute cold starts triggered, per database",
+        &["database"]
+    )
+    .unwrap()
+});
+
+/// 1 when a database's compute is running, 0 when hibernated. Integrate over
+/// time (e.g. `sum_over_time`) for compute-seconds and idle ratio.
+pub static DB_COMPUTE_UP: Lazy<IntGaugeVec> = Lazy::new(|| {
+    register_int_gauge_vec!(
+        "aethel_proxy_database_compute_up",
+        "1 when a database's compute is running, else 0",
+        &["database"]
+    )
+    .unwrap()
+});
+
+/// Set the compute-up gauge for `database` (true = running).
+pub fn set_compute_up(database: &str, up: bool) {
+    DB_COMPUTE_UP.with_label_values(&[database]).set(up as i64);
+}
 
 /// Client connections accepted.
 pub static CONNECTIONS: Lazy<IntCounter> = Lazy::new(|| {

@@ -55,6 +55,7 @@ pub async fn reap_once(proxy: &Arc<Proxy>, idle_after: Duration) {
         match proxy.activator().stop(&name).await {
             Ok(()) => {
                 state.set_running(false);
+                crate::metrics::set_compute_up(&name, false);
                 crate::metrics::IDLE_REAPS.inc();
             }
             Err(err) => warn!(tenant = %name, error = %format!("{err:#}"), "failed to stop tenant"),

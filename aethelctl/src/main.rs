@@ -152,6 +152,9 @@ enum Command {
         /// Proxy compute-control API URL (enables running state + start/hibernate).
         #[arg(long, env = "AETHEL_PROXY_URL")]
         proxy_url: Option<String>,
+        /// Prometheus base URL (enables per-database metrics charts).
+        #[arg(long, env = "AETHEL_PROMETHEUS_URL")]
+        prometheus_url: Option<String>,
     },
 }
 
@@ -302,13 +305,21 @@ fn main() -> Result<()> {
             deploy::uninstall(&release, &namespace)?;
         }
 
-        Command::Serve { listen, allow_apply, grafana_url, client_endpoint, proxy_url } => {
+        Command::Serve {
+            listen,
+            allow_apply,
+            grafana_url,
+            client_endpoint,
+            proxy_url,
+            prometheus_url,
+        } => {
             let cfg = aethelctl::serve::ServeCfg {
                 control_url: cli.server.clone(),
                 allow_apply,
                 grafana_url,
                 client_endpoint,
                 proxy_url,
+                prometheus_url,
             };
             aethelctl::serve::serve(&listen, cfg, cli.token.clone())?;
         }

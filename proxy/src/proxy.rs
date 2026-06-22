@@ -259,7 +259,8 @@ impl Proxy {
 
         // Account for this connection for the lifetime of the splice; the guard
         // guarantees the gauge is decremented even on error or panic.
-        let _guard = ConnGuard::new(state.clone());
+        crate::metrics::DB_CONNECTIONS.with_label_values(&[&tenant_name]).inc();
+        let _guard = ConnGuard::new(state.clone(), tenant_name.clone());
         info!(%peer, tenant = %tenant_name, %backend_addr, "splicing connection");
 
         let (c2b, b2c) = self
@@ -336,6 +337,7 @@ impl Proxy {
         if !state.is_running() {
             info!(tenant, "cold start: triggering activator");
             crate::metrics::WAKES.inc();
+            crate::metrics::DB_WAKES.with_label_values(&[tenant]).inc();
             self.activator
                 .start(tenant)
                 .await
@@ -349,6 +351,7 @@ impl Proxy {
         // Probe succeeded: record compute as running so the next connection
         // skips the activator.
         state.set_running(true);
+        crate::metrics::set_compute_up(tenant, true);
         if elapsed > Duration::from_millis(50) {
             info!(tenant, ?elapsed, "compute ready (cold start)");
         }
@@ -415,13 +418,15 @@ async fn read_raw_message<S: AsyncRead + Unpin>(stream: &mut S) -> anyhow::Resul
 /// decrements it when dropped, so the count is correct on every exit path.
 struct ConnGuard {
     state: Arc<TenantState>,
+    database: String,
 }
 
 impl ConnGuard {
-    fn new(state: Arc<TenantState>) -> Self {
+    fn new(state: Arc<TenantState>, database: String) -> Self {
         state.connection_started();
         crate::metrics::ACTIVE_CONNECTIONS.inc();
-        ConnGuard { state }
+        crate::metrics::DB_ACTIVE.with_label_values(&[&database]).inc();
+        ConnGuard { state, database }
     }
 }
 
@@ -429,5 +434,6 @@ impl Drop for ConnGuard {
     fn drop(&mut self) {
         self.state.connection_finished();
         crate::metrics::ACTIVE_CONNECTIONS.dec();
+        crate::metrics::DB_ACTIVE.with_label_values(&[&self.database]).dec();
     }
 }
