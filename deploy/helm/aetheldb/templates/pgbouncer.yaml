@@ -1,0 +1,62 @@
+{{- /* SPDX-License-Identifier: Apache-2.0 */ -}}
+{{- if .Values.pooling.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aetheldb.fullname" . }}-pgbouncer
+  labels:
+    {{- include "aetheldb.labels" . | nindent 4 }}
+    app: pgbouncer
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    aethel.component: pgbouncer
+  ports:
+    - { name: pgbouncer, port: 6432, targetPort: 6432 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aetheldb.fullname" . }}-pgbouncer
+  labels:
+    {{- include "aetheldb.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      aethel.component: pgbouncer
+  template:
+    metadata:
+      labels:
+        {{- include "aetheldb.labels" . | nindent 8 }}
+        app: pgbouncer
+        aethel.component: pgbouncer
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+      containers:
+        - name: pgbouncer
+          image: {{ .Values.pooling.image }}
+          env:
+            - { name: DB_HOST, value: {{ .Values.pooling.dbHost | quote }} }
+            - { name: DB_PORT, value: "5432" }
+            - { name: DB_NAME, value: {{ .Values.pooling.dbName | quote }} }
+            - { name: DB_USER, value: "postgres" }
+            - { name: LISTEN_PORT, value: "6432" }
+            - { name: POOL_MODE, value: {{ .Values.pooling.poolMode | quote }} }
+            - { name: MAX_CLIENT_CONN, value: "1000" }
+            - { name: DEFAULT_POOL_SIZE, value: "25" }
+            - { name: IGNORE_STARTUP_PARAMETERS, value: "extra_float_digits,options" }
+            # DEV default — set scram-sha-256 + a userlist in production.
+            - { name: AUTH_TYPE, value: "trust" }
+          ports:
+            - { containerPort: 6432, name: pgbouncer }
+          readinessProbe:
+            tcpSocket: { port: 6432 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+{{- end }}

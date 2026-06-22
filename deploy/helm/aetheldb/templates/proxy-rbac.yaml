@@ -1,0 +1,39 @@
+{{- /* SPDX-License-Identifier: Apache-2.0 */ -}}
+{{- if .Values.proxy.activator.kubernetes }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "aetheldb.fullname" . }}-proxy
+  labels:
+    {{- include "aetheldb.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "aetheldb.fullname" . }}-proxy-activator
+  labels:
+    {{- include "aetheldb.labels" . | nindent 4 }}
+rules:
+  # The scale-to-zero activator scales per-tenant compute Deployments.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "aetheldb.fullname" . }}-proxy-activator
+  labels:
+    {{- include "aetheldb.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "aetheldb.fullname" . }}-proxy-activator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aetheldb.fullname" . }}-proxy
+    namespace: {{ .Release.Namespace }}
+{{- end }}

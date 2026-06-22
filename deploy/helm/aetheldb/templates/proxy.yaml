@@ -1,0 +1,69 @@
+{{- /* SPDX-License-Identifier: Apache-2.0 */ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aetheldb.fullname" . }}-proxy
+  labels:
+    {{- include "aetheldb.labels" . | nindent 4 }}
+    app: proxy
+spec:
+  type: {{ .Values.proxy.service.type }}
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    aethel.component: proxy
+  ports:
+    - { name: postgres, port: {{ .Values.proxy.service.port }}, targetPort: 5432 }
+    - { name: metrics, port: 9432, targetPort: 9432 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aetheldb.fullname" . }}-proxy
+  labels:
+    {{- include "aetheldb.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.proxy.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      aethel.component: proxy
+  template:
+    metadata:
+      labels:
+        {{- include "aetheldb.labels" . | nindent 8 }}
+        app: proxy
+        aethel.component: proxy
+      {{- if .Values.metrics.annotations }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9432"
+      {{- end }}
+    spec:
+      {{- if .Values.proxy.activator.kubernetes }}
+      serviceAccountName: {{ include "aetheldb.fullname" . }}-proxy
+      {{- end }}
+      containers:
+        - name: proxy
+          image: {{ include "aetheldb.image" (dict "svc" "proxy" "root" $) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "aethel-proxy"
+            - "--listen"
+            - "0.0.0.0:5432"
+            - "--metrics-listen"
+            - "0.0.0.0:9432"
+            - "--idle-secs"
+            - "{{ .Values.proxy.idleSecs }}"
+            {{- range .Values.proxy.tenants }}
+            - "--tenant"
+            - {{ . | quote }}
+            {{- end }}
+            {{- if .Values.proxy.activator.kubernetes }}
+            - "--kube-namespace"
+            - {{ .Release.Namespace | quote }}
+            {{- end }}
+          ports:
+            - { containerPort: 5432, name: postgres }
+            - { containerPort: 9432, name: metrics }
+          resources:
+            {{- toYaml .Values.proxy.resources | nindent 12 }}

@@ -1,0 +1,32 @@
+AethelDB {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Components:
+  • safekeeper  ({{ .Values.safekeeper.replicas }} replica{{ if gt (int .Values.safekeeper.replicas) 1 }}s{{ end }}) — durable, quorum-committed WAL
+  • pageserver  — decode/redo WAL, branching + PITR, layer offload
+  • proxy       — scale-to-zero ingress (PostgreSQL :{{ .Values.proxy.service.port }})
+{{- if .Values.pooling.enabled }}
+  • pgbouncer   — optional transaction pooling
+{{- end }}
+
+Object storage:
+{{- if .Values.objectStore.url }}
+  {{ .Values.objectStore.url }}
+  (credentials from {{ if .Values.objectStore.existingSecret }}existing Secret "{{ .Values.objectStore.existingSecret }}"{{ else }}chart-managed Secret{{ end }})
+{{- else }}
+  local PVC (single-node). Set objectStore.url to s3://, az://, or gs:// for cloud durability.
+{{- end }}
+
+Connect a client to the proxy:
+{{- if eq .Values.proxy.service.type "LoadBalancer" }}
+  export PGHOST=$(kubectl -n {{ .Release.Namespace }} get svc {{ include "aetheldb.fullname" . }}-proxy -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  psql "host=$PGHOST port={{ .Values.proxy.service.port }} dbname=<your-db> user=<user>"
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "aetheldb.fullname" . }}-proxy {{ .Values.proxy.service.port }}:{{ .Values.proxy.service.port }}
+  psql "host=127.0.0.1 port={{ .Values.proxy.service.port }} dbname=<your-db> user=<user>"
+{{- end }}
+
+Drive the page-server control plane (branches, PITR, GC):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "aetheldb.fullname" . }}-pageserver 6403:6403
+  curl localhost:6403/healthz
+
+See https://github.com/cloudivian-org/AethelDB and deploy/helm/README.md.

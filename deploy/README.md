@@ -82,6 +82,18 @@ Every pod is annotated `prometheus.io/scrape: "true"` with its metrics port.
   `deploy/pooling/verify-pooling.sh`. See
   [`deploy/pooling/README.md`](pooling/README.md).
 
+## Helm — deploy to any cloud (S3 / Azure / GCS)
+
+For a parameterized, production-shaped deploy to **EKS / AKS / GKE** (or any
+cluster), use the Helm chart in [`deploy/helm/`](helm/README.md). One chart, any
+cloud's object storage — set `objectStore.url` to `s3://`, `az://`, or `gs://`:
+
+```bash
+helm install aethel deploy/helm/aetheldb --namespace aethel --create-namespace \
+  --set image.repository=you/aetheldb --set image.tag=v0.2.0 \
+  --set objectStore.url=s3://my-bucket -f my-values.yaml
+```
+
 ## Security hardening
 
 > ⚠️ **The bundled Compose and Kubernetes manifests are configured for local
