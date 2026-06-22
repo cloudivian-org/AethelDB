@@ -34,6 +34,8 @@ pub struct ServeCfg {
     pub grafana_url: Option<String>,
     /// The client-facing endpoint (proxy `host:port`) shown in connection strings.
     pub client_endpoint: String,
+    /// Optional proxy compute-control API base URL (for running state + start/stop).
+    pub proxy_url: Option<String>,
 }
 
 /// Serve the console on `listen`, proxying control-plane calls to the page server.
@@ -79,6 +81,17 @@ fn route(
     client: &Client,
     cfg: &ServeCfg,
 ) -> Reply {
+    // Dynamic: POST /api/databases/<name>/start|stop (compute lifecycle).
+    if *method == Method::Post {
+        if let Some(rest) = path.strip_prefix("/api/databases/") {
+            if let Some(name) = rest.strip_suffix("/start") {
+                return api(database_action(cfg, name, true));
+            }
+            if let Some(name) = rest.strip_suffix("/stop") {
+                return api(database_action(cfg, name, false));
+            }
+        }
+    }
     match (method, path) {
         (Method::Get, "/") | (Method::Get, "/index.html") => {
             (200, INDEX_HTML.to_string(), "text/html; charset=utf-8")
@@ -113,13 +126,51 @@ fn api(r: Result<Value>) -> Reply {
 
 fn status(client: &Client, cfg: &ServeCfg) -> Result<Value> {
     client.healthz()?;
+    let running = compute_states(cfg).values().filter(|&&r| r).count();
     Ok(json!({
         "server": cfg.control_url,
         "databases": databases::load().len(),
+        "running": running,
+        "computeControl": cfg.proxy_url.is_some(),
         "allowApply": cfg.allow_apply,
         "grafanaUrl": cfg.grafana_url,
         "clientEndpoint": cfg.client_endpoint,
     }))
+}
+
+/// Per-tenant running state from the proxy's compute-control API (empty if no
+/// proxy URL is configured or it's unreachable).
+fn compute_states(cfg: &ServeCfg) -> std::collections::HashMap<String, bool> {
+    let mut map = std::collections::HashMap::new();
+    if let Some(base) = &cfg.proxy_url {
+        let url = format!("{}/tenants", base.trim_end_matches('/'));
+        if let Ok(resp) = ureq::get(&url).call() {
+            if let Ok(v) = resp.into_json::<Value>() {
+                if let Some(arr) = v.get("tenants").and_then(|t| t.as_array()) {
+                    for t in arr {
+                        if let (Some(name), Some(running)) = (
+                            t.get("tenant").and_then(|n| n.as_str()),
+                            t.get("running").and_then(|r| r.as_bool()),
+                        ) {
+                            map.insert(name.to_string(), running);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+/// Start (`start=true`) or hibernate a database's compute via the proxy.
+fn database_action(cfg: &ServeCfg, name: &str, start: bool) -> Result<Value> {
+    let base = cfg.proxy_url.as_ref().ok_or_else(|| {
+        anyhow!("compute control is not configured; start `aethelctl serve` with --proxy-url")
+    })?;
+    let action = if start { "start" } else { "stop" };
+    let url = format!("{}/tenants/{}/{}", base.trim_end_matches('/'), name, action);
+    ureq::post(&url).call().map_err(|e| anyhow!("compute {action} for {name} failed: {e}"))?;
+    Ok(json!({ "name": name, "running": start }))
 }
 
 const ROOT_TIMELINE: &str = "00000000000000000000000000000000";
@@ -139,23 +190,35 @@ fn create_database(client: &Client, cfg: &ServeCfg, body: &str) -> Result<Value>
     }))
 }
 
-/// List provisioned databases, tagging each with a live status from the control
-/// plane (active when its tenant exists, else pending).
+/// List provisioned databases, tagging each with its provisioning status (from
+/// the control plane) and its compute state (running / hibernated, from the
+/// proxy — `unmanaged` when no compute route exists).
 fn list_databases(client: &Client, cfg: &ServeCfg) -> Result<Value> {
     let live = client.list_tenants().unwrap_or_default();
+    let compute = compute_states(cfg);
     let dbs: Vec<Value> = databases::load()
         .into_iter()
         .map(|d| {
             let status = if live.contains(&d.id) { "active" } else { "pending" };
+            let compute = match compute.get(&d.name) {
+                Some(true) => "running",
+                Some(false) => "hibernated",
+                None => "unmanaged",
+            };
             json!({
                 "name": d.name,
                 "id": d.id,
                 "connection": databases::connection_string(&d.name, &cfg.client_endpoint),
                 "status": status,
+                "compute": compute,
             })
         })
         .collect();
-    Ok(json!({ "databases": dbs, "endpoint": cfg.client_endpoint }))
+    Ok(json!({
+        "databases": dbs,
+        "endpoint": cfg.client_endpoint,
+        "computeControl": cfg.proxy_url.is_some(),
+    }))
 }
 
 /// Treat an "already exists" (HTTP 409) as success — provisioning is idempotent.

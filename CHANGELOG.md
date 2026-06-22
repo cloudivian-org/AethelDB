@@ -18,6 +18,11 @@ pooling, control-plane auth, and full observability — on top of the 0.1.0 data
 plane.
 
 ### Added
+- **Compute lifecycle (start / hibernate)**: the proxy exposes an optional
+  compute-control HTTP API (`--control-listen`) for per-tenant running state and
+  start/stop, over the same activator the idle reaper uses. The console's
+  **Databases** view shows running vs hibernated and starts/hibernates on demand
+  (`aethelctl serve --proxy-url …`), with a "running" count in the Overview.
 - **Release workflow + published images**: a GitHub Actions workflow builds and
   pushes the `proxy`/`safekeeper`/`pageserver` images (multi-arch) to GHCR and
   publishes the Helm chart as an OCI artifact on each release tag. The chart now

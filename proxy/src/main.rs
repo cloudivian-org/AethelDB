@@ -70,6 +70,11 @@ struct Args {
     #[arg(long, env = "SP_PROXY_METRICS_LISTEN", default_value = "0.0.0.0:9432")]
     metrics_listen: SocketAddr,
 
+    /// Optional address for the compute-control HTTP API (per-tenant running
+    /// state + start/hibernate). When unset, the API is not served.
+    #[arg(long, env = "SP_PROXY_CONTROL_LISTEN")]
+    control_listen: Option<SocketAddr>,
+
     /// PEM certificate-chain file for TLS termination. Set with --tls-key to
     /// accept TLS (`SSLRequest`) from clients; omit for plaintext only.
     #[arg(long, env = "SP_PROXY_TLS_CERT", requires = "tls_key")]
@@ -158,6 +163,15 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("failed to bind metrics {}", args.metrics_listen))?;
     tokio::spawn(common::metrics::serve_metrics(metrics_listener));
     info!(addr = %args.metrics_listen, "serving Prometheus metrics");
+
+    // Optional compute-control HTTP API (start/hibernate per tenant).
+    if let Some(addr) = args.control_listen {
+        let control_listener = TcpListener::bind(addr)
+            .await
+            .with_context(|| format!("failed to bind control {addr}"))?;
+        tokio::spawn(proxy::control::serve_control(proxy.clone(), control_listener));
+        info!(addr = %addr, "compute-control API ready");
+    }
 
     // Bind and serve.
     let listener = TcpListener::bind(args.listen)

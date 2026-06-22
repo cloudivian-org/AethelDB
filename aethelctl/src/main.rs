@@ -149,6 +149,9 @@ enum Command {
         /// Client-facing endpoint (proxy host:port) shown in connection strings.
         #[arg(long, env = "AETHEL_CLIENT_ENDPOINT", default_value = "localhost:5432")]
         client_endpoint: String,
+        /// Proxy compute-control API URL (enables running state + start/hibernate).
+        #[arg(long, env = "AETHEL_PROXY_URL")]
+        proxy_url: Option<String>,
     },
 }
 
@@ -299,12 +302,13 @@ fn main() -> Result<()> {
             deploy::uninstall(&release, &namespace)?;
         }
 
-        Command::Serve { listen, allow_apply, grafana_url, client_endpoint } => {
+        Command::Serve { listen, allow_apply, grafana_url, client_endpoint, proxy_url } => {
             let cfg = aethelctl::serve::ServeCfg {
                 control_url: cli.server.clone(),
                 allow_apply,
                 grafana_url,
                 client_endpoint,
+                proxy_url,
             };
             aethelctl::serve::serve(&listen, cfg, cli.token.clone())?;
         }
