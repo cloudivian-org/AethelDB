@@ -115,7 +115,7 @@
     <!-- Databases -->
     <section id="databases" class="hidden">
       <div class="head"><div><h1>Databases</h1><p>Create a database and connect — it scales to zero when idle, no sizing required.</p></div></div>
-      <div class="card">
+      <div class="card" id="dbCreate">
         <div class="row">
           <div class="field"><label>Database name</label><input id="dbName" placeholder="orders" onkeydown="if(event.key==='Enter')createDatabase()" /></div>
           <button class="btn primary" onclick="createDatabase()">Create database</button>
@@ -123,6 +123,7 @@
         <p class="note" style="margin:10px 0 0">Serverless by default — there's nothing to size. You get a connection string instantly.</p>
       </div>
       <div id="dbList"></div>
+      <div id="dbDetail" class="hidden"></div>
     </section>
 
     <!-- Deploy -->
@@ -242,6 +243,7 @@ async function loadDatabases() {
       <div class="dbhead"><b>${n}</b>${pill}${serving}<span style="flex:1"></span>${life}</div>
       <div class="connrow"><code>${d.connection}</code><button class="btn sm" onclick="copyText('${d.connection}')">Copy</button></div>
       <div class="row" style="margin-top:10px">
+        <button class="btn sm" onclick="openMetrics('${n}')">📈 Metrics</button>
         <button class="btn sm" onclick="toggleBranch('${n}')">⎇ Branch / restore point</button>
         <button class="btn sm" style="border-color:var(--danger);color:var(--danger)" onclick="deleteDatabase('${n}')">Delete</button>
       </div>
@@ -270,6 +272,64 @@ async function restoreDb(name, timeline) {
   try { await api("POST", `/api/databases/${name}/restore`, { timeline }); toast(`${name} restored to ${timeline === 'live' ? 'live' : 'restore point'}`, "ok"); loadDatabases(); }
   catch (e) { toast(e.message, "err"); }
 }
+
+// ---- Per-database metrics (detail view) ----
+function fnum(n) { if (n === undefined || n === null || isNaN(n)) return '0'; if (Math.abs(n) >= 100) return Math.round(n).toLocaleString(); return (Math.round(n * 100) / 100).toString(); }
+function sumv(a) { return (a && a.length) ? a.reduce((x, p) => x + p[1], 0) : 0; }
+function lastv(a) { return (a && a.length) ? a[a.length - 1][1] : 0; }
+function maxv(a) { return (a && a.length) ? Math.max(...a.map(p => p[1])) : 0; }
+function avgv(a) { return (a && a.length) ? sumv(a) / a.length : 0; }
+function sparkline(series, color, unit) {
+  if (!series || !series.length) return `<div class="empty" style="height:64px;display:flex;align-items:center;justify-content:center">no data in the last hour</div>`;
+  const W = 600, H = 64, n = series.length;
+  const vals = series.map(p => p[1]);
+  const max = Math.max(...vals), min = Math.min(...vals, 0), span = (max - min) || 1;
+  const xy = series.map((p, i) => { const x = n <= 1 ? W : (i / (n - 1)) * W; const y = H - ((p[1] - min) / span) * (H - 8) - 4; return `${x.toFixed(1)},${y.toFixed(1)}`; });
+  const area = `0,${H} ${xy.join(' ')} ${W},${H}`;
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:64px;display:block">
+      <polygon points="${area}" fill="${color}" opacity="0.10"/>
+      <polyline points="${xy.join(' ')}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"/>
+    </svg>
+    <div class="muted" style="font-size:12px;margin-top:4px">now ${fnum(lastv(series))}${unit} · peak ${fnum(maxv(series))}${unit}</div>`;
+}
+function chartCard(title, series, color, unit) {
+  return `<div class="card"><h3>${title}</h3>${sparkline(series, color, unit || '')}</div>`;
+}
+async function openMetrics(name) {
+  $("#dbList").classList.add("hidden"); $("#dbCreate").classList.add("hidden");
+  const d = $("#dbDetail"); d.classList.remove("hidden");
+  const head = `<div class="dbhead"><button class="btn sm" onclick="closeMetrics()">← Back</button><b style="margin-left:8px">${name}</b><span class="muted" style="margin-left:8px">metrics · last hour</span></div>`;
+  d.innerHTML = `<div class="card">${head}<div class="empty">loading…</div></div>`;
+  try {
+    const r = await api("GET", `/api/databases/${name}/metrics`);
+    const s = r.series || {};
+    const uptime = avgv(s.computeUp) * 100;
+    const tiles = [
+      ['Active now', fnum(lastv(s.active))],
+      ['Peak active (1h)', fnum(maxv(s.active))],
+      ['Connections (1h)', fnum(Math.round(sumv(s.connections) * 60))],
+      ['Cold starts (1h)', fnum(Math.round(sumv(s.wakes) * 60))],
+      ['Compute uptime', uptime.toFixed(0) + '%'],
+      ['Saved by scale-to-zero', (100 - uptime).toFixed(0) + '%'],
+    ];
+    d.innerHTML = `<div class="card">
+      ${head}
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:14px">
+        ${tiles.map(t => `<div class="card" style="padding:14px"><div class="muted" style="font-size:12px">${t[0]}</div><div class="stat">${t[1]}</div></div>`).join('')}
+      </div>
+      <div style="display:grid;gap:14px;margin-top:16px">
+        ${chartCard('Connections / sec', s.connections, 'var(--accent)', '/s')}
+        ${chartCard('Active connections', s.active, 'var(--teal)', '')}
+        ${chartCard('Compute — running (1) vs hibernated (0)', s.computeUp, 'var(--amber)', '')}
+        ${chartCard('Cold starts / sec', s.wakes, 'var(--accent2)', '/s')}
+      </div>
+      <p class="note" style="margin-top:12px"><b>Uptime</b> &amp; <b>saved by scale-to-zero</b> come from compute that hibernates when idle — signals an always-on database (Aurora, RDS) can't show.</p>
+    </div>`;
+  } catch (e) {
+    d.innerHTML = `<div class="card">${head}<div class="empty">${e.message}<br><span class="muted">Start the console with <code>--prometheus-url &lt;url&gt;</code> to enable per-database charts.</span></div></div>`;
+  }
+}
+function closeMetrics() { $("#dbDetail").classList.add("hidden"); $("#dbList").classList.remove("hidden"); $("#dbCreate").classList.remove("hidden"); }
 async function deleteDatabase(name) {
   if (!confirm(`Delete database "${name}"? This deprovisions its tenant and removes its route.`)) return;
   try { await api("DELETE", `/api/databases/${name}`); toast(`Deleted "${name}"`, "ok"); loadDatabases(); refreshAll(); }

@@ -36,6 +36,8 @@ pub struct ServeCfg {
     pub client_endpoint: String,
     /// Optional proxy compute-control API base URL (for running state + start/stop).
     pub proxy_url: Option<String>,
+    /// Optional Prometheus base URL (for per-database metrics charts).
+    pub prometheus_url: Option<String>,
 }
 
 /// Serve the console on `listen`, proxying control-plane calls to the page server.
@@ -98,6 +100,14 @@ fn route(
             }
         }
     }
+    // Dynamic: GET /api/databases/<name>/metrics (per-database charts).
+    if *method == Method::Get {
+        if let Some(rest) = path.strip_prefix("/api/databases/") {
+            if let Some(name) = rest.strip_suffix("/metrics") {
+                return api(database_metrics(cfg, name));
+            }
+        }
+    }
     // Dynamic: DELETE /api/databases/<name> (deprovision).
     if *method == Method::Delete {
         if let Some(name) = path.strip_prefix("/api/databases/") {
@@ -146,10 +156,72 @@ fn status(client: &Client, cfg: &ServeCfg) -> Result<Value> {
         "databases": databases::load().len(),
         "running": running,
         "computeControl": cfg.proxy_url.is_some(),
+        "metrics": cfg.prometheus_url.is_some(),
         "allowApply": cfg.allow_apply,
         "grafanaUrl": cfg.grafana_url,
         "clientEndpoint": cfg.client_endpoint,
     }))
+}
+
+/// Per-database time-series for the console charts, queried from Prometheus over
+/// the last hour. Returns native series the SPA renders as sparklines — the
+/// scale-to-zero / branching signals Aurora can't show. Requires `--prometheus-url`.
+fn database_metrics(cfg: &ServeCfg, name: &str) -> Result<Value> {
+    let prom = cfg.prometheus_url.as_ref().ok_or_else(|| {
+        anyhow!("metrics are not configured; start `aethelctl serve` with --prometheus-url")
+    })?;
+    let end = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let start = end.saturating_sub(3600);
+    let sel = format!("{{database=\"{name}\"}}");
+    let series = |metric: &str, rate: bool| -> Vec<Value> {
+        let expr = if rate {
+            format!("rate(aethel_proxy_database_{metric}{sel}[5m])")
+        } else {
+            format!("aethel_proxy_database_{metric}{sel}")
+        };
+        prom_range(prom, &expr, start, end)
+    };
+    Ok(json!({
+        "database": name,
+        "window": 3600,
+        "series": {
+            "connections": series("connections_total", true),
+            "active": series("active_connections", false),
+            "computeUp": series("compute_up", false),
+            "wakes": series("wakes_total", true),
+        },
+    }))
+}
+
+/// Run a Prometheus `query_range` and return `[[unix_ts, value], …]` (empty on
+/// any error — the chart just shows no data, never breaks the page).
+fn prom_range(prom: &str, expr: &str, start: u64, end: u64) -> Vec<Value> {
+    let url = format!("{}/api/v1/query_range", prom.trim_end_matches('/'));
+    let resp = ureq::get(&url)
+        .query("query", expr)
+        .query("start", &start.to_string())
+        .query("end", &end.to_string())
+        .query("step", "60")
+        .call();
+    let Ok(resp) = resp else { return vec![] };
+    let Ok(v) = resp.into_json::<Value>() else { return vec![] };
+    v.pointer("/data/result/0/values")
+        .and_then(|x| x.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|pair| {
+                    let arr = pair.as_array()?;
+                    let t = arr.first()?.as_f64()?;
+                    let val = arr.get(1)?.as_str()?.parse::<f64>().ok()?;
+                    Some(json!([t, val]))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Per-tenant running state from the proxy's compute-control API (empty if no
