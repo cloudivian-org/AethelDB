@@ -233,8 +233,10 @@ Each subsystem has a focused design doc under [`docs/design/`](docs/design/):
 
 ## Status & roadmap
 
-See the full [**Roadmap**](ROADMAP.md) (including the cloud / BYOC deploy plan and
-the compatibility charter) and an honest [**comparison vs Neon & Supabase**](docs/comparison.md).
+See the full [**Roadmap**](ROADMAP.md) (cloud / BYOC deploy plan + compatibility
+charter), an honest [**comparison vs Neon & Supabase**](docs/comparison.md), and
+[**the path to world-class**](docs/world-class.md) (what we are/aren't, the
+observability bet, and the prioritized gap-list).
 
 **Done and tested:**
 
