@@ -9,9 +9,11 @@
 fullnameOverride: ""
 
 image:
-  registry: docker.io
-  repository: aetheldb # org; per-service images are <repository>/<service>:<tag>
-  tag: dev # pin to a release tag or digest in production
+  # Published by the release workflow to GHCR as
+  # ghcr.io/<owner>/aetheldb/{proxy,safekeeper,pageserver}.
+  registry: ghcr.io
+  repository: cloudivian-org/aetheldb # <owner>/aetheldb; images are <repository>/<service>
+  tag: "" # empty → the chart's appVersion; pin to a digest in production
   pullPolicy: IfNotPresent
 
 # ---------------------------------------------------------------------------

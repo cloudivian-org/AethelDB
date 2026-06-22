@@ -18,6 +18,11 @@ pooling, control-plane auth, and full observability — on top of the 0.1.0 data
 plane.
 
 ### Added
+- **Release workflow + published images**: a GitHub Actions workflow builds and
+  pushes the `proxy`/`safekeeper`/`pageserver` images (multi-arch) to GHCR and
+  publishes the Helm chart as an OCI artifact on each release tag. The chart now
+  **defaults to those images** (`ghcr.io/<owner>/aetheldb/*`, appVersion tag), so
+  `helm install` / `aethelctl deploy` need no `--image-repo`.
 - **Web console** (`aethelctl serve`): an embedded single-page GUI to operate
   (tenants, branches, PITR, GC) and **deploy** (on-prem / AWS / Azure / GCP, with
   autoscaling + availability toggles and a live `helm --dry-run` preview). The
