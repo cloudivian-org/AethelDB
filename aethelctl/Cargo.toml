@@ -29,6 +29,8 @@ ureq = { version = "2.9", features = ["json"] }
 include_dir = "0.7"
 # Tiny blocking HTTP server for the `aethelctl serve` web console.
 tiny_http = "0.12"
+# Stable hash to derive a tenant id from a friendly database name.
+sha2 = "0.10"
 
 [dev-dependencies]
 # Integration tests drive a real page-server HTTP control plane in-process.

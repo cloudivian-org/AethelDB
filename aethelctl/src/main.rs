@@ -146,6 +146,9 @@ enum Command {
         /// Grafana base URL to embed metrics panels in the Overview (optional).
         #[arg(long, env = "AETHEL_GRAFANA_URL")]
         grafana_url: Option<String>,
+        /// Client-facing endpoint (proxy host:port) shown in connection strings.
+        #[arg(long, env = "AETHEL_CLIENT_ENDPOINT", default_value = "localhost:5432")]
+        client_endpoint: String,
     },
 }
 
@@ -296,11 +299,12 @@ fn main() -> Result<()> {
             deploy::uninstall(&release, &namespace)?;
         }
 
-        Command::Serve { listen, allow_apply, grafana_url } => {
+        Command::Serve { listen, allow_apply, grafana_url, client_endpoint } => {
             let cfg = aethelctl::serve::ServeCfg {
                 control_url: cli.server.clone(),
                 allow_apply,
                 grafana_url,
+                client_endpoint,
             };
             aethelctl::serve::serve(&listen, cfg, cli.token.clone())?;
         }

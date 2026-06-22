@@ -18,6 +18,7 @@ dependencies = [
  "pageserver",
  "serde",
  "serde_json",
+ "sha2",
  "tiny_http",
  "tokio",
  "ureq",

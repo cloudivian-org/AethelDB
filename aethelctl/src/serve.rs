@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 use crate::deploy::{self, DeployOpts};
-use crate::Client;
+use crate::{databases, Client};
 
 /// The embedded console SPA.
 const INDEX_HTML: &str = include_str!("../console/index.html");
@@ -32,6 +32,8 @@ pub struct ServeCfg {
     pub allow_apply: bool,
     /// Optional Grafana base URL to embed metrics panels in the Overview.
     pub grafana_url: Option<String>,
+    /// The client-facing endpoint (proxy `host:port`) shown in connection strings.
+    pub client_endpoint: String,
 }
 
 /// Serve the console on `listen`, proxying control-plane calls to the page server.
@@ -82,6 +84,8 @@ fn route(
             (200, INDEX_HTML.to_string(), "text/html; charset=utf-8")
         }
         (Method::Get, "/api/status") => api(status(client, cfg)),
+        (Method::Get, "/api/databases") => api(list_databases(client, cfg)),
+        (Method::Post, "/api/databases") => api(create_database(client, cfg, body)),
         (Method::Get, "/api/tenants") => {
             api(client.list_tenants().map(|t| json!({ "tenants": t })))
         }
@@ -109,15 +113,64 @@ fn api(r: Result<Value>) -> Reply {
 
 fn status(client: &Client, cfg: &ServeCfg) -> Result<Value> {
     client.healthz()?;
-    let tenants = client.list_tenants()?;
-    let timelines = client.list_timelines(None)?;
     Ok(json!({
         "server": cfg.control_url,
-        "tenants": tenants,
-        "timelines": timelines,
+        "databases": databases::load().len(),
         "allowApply": cfg.allow_apply,
         "grafanaUrl": cfg.grafana_url,
+        "clientEndpoint": cfg.client_endpoint,
     }))
+}
+
+const ROOT_TIMELINE: &str = "00000000000000000000000000000000";
+
+/// Provision a database by name: derive its tenant, create it + a root timeline
+/// on the control plane (idempotent), and record the name locally.
+fn create_database(client: &Client, cfg: &ServeCfg, body: &str) -> Result<Value> {
+    let name = field(&parse(body), "name")?.to_string();
+    let db = databases::upsert(&name)?;
+    ignore_conflict(client.create_tenant(&db.id))?;
+    ignore_conflict(client.create_timeline(ROOT_TIMELINE, Some(&db.id)))?;
+    Ok(json!({
+        "name": db.name,
+        "id": db.id,
+        "connection": databases::connection_string(&db.name, &cfg.client_endpoint),
+        "status": "active",
+    }))
+}
+
+/// List provisioned databases, tagging each with a live status from the control
+/// plane (active when its tenant exists, else pending).
+fn list_databases(client: &Client, cfg: &ServeCfg) -> Result<Value> {
+    let live = client.list_tenants().unwrap_or_default();
+    let dbs: Vec<Value> = databases::load()
+        .into_iter()
+        .map(|d| {
+            let status = if live.contains(&d.id) { "active" } else { "pending" };
+            json!({
+                "name": d.name,
+                "id": d.id,
+                "connection": databases::connection_string(&d.name, &cfg.client_endpoint),
+                "status": status,
+            })
+        })
+        .collect();
+    Ok(json!({ "databases": dbs, "endpoint": cfg.client_endpoint }))
+}
+
+/// Treat an "already exists" (HTTP 409) as success — provisioning is idempotent.
+fn ignore_conflict(r: Result<Value>) -> Result<()> {
+    match r {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let m = format!("{e:#}");
+            if m.contains("409") || m.to_lowercase().contains("exists") {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 fn do_create_tenant(client: &Client, body: &str) -> Result<Value> {

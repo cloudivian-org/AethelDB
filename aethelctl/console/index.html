@@ -18,13 +18,9 @@
     --line: #1f2937; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.4);
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   a { color: var(--accent2); }
   .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
-  /* Sidebar */
   .side { background: var(--panel); border-right: 1px solid var(--line); padding: 20px 14px; display: flex; flex-direction: column; gap: 4px; }
   .brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 18px; }
   .brand .logo { width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); }
@@ -39,15 +35,15 @@
   .pill { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
   .pill.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(22,163,74,.15); }
   .pill.bad { background: var(--danger); box-shadow: 0 0 0 3px rgba(220,38,38,.15); }
-  /* Main */
   .main { padding: 26px 30px; max-width: 1100px; }
   .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
   .head h1 { font-size: 22px; margin: 0; }
   .head p { color: var(--muted); margin: 2px 0 0; }
-  .btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 8px 14px; border-radius: 10px; font-weight: 600; cursor: pointer; }
+  .btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 9px 15px; border-radius: 10px; font-weight: 600; cursor: pointer; }
   .btn:hover { border-color: var(--accent); }
   .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border: none; }
   .btn.ghost { background: transparent; }
+  .btn.sm { padding: 6px 11px; font-size: 12.5px; }
   .btn:disabled { opacity: .5; cursor: default; }
   .grid { display: grid; gap: 16px; }
   .cards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
@@ -57,30 +53,35 @@
   .stat small { font-size: 13px; color: var(--muted); font-weight: 600; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
   label { display: block; font-weight: 600; font-size: 12.5px; margin: 0 0 5px; color: var(--muted); }
-  input, select { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; }
+  input, select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; }
   input:focus, select:focus { outline: 2px solid rgba(109,40,217,.3); border-color: var(--accent); }
   .field { flex: 1; min-width: 160px; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); }
-  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
-  td code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
-  .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
-  .tag.root { background: rgba(37,99,235,.12); color: var(--accent2); }
-  .tag.branch { background: rgba(13,148,136,.14); color: var(--teal); }
   .muted { color: var(--muted); }
+  .mono, code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
   pre.out { background: #0b1120; color: #d1d5db; border-radius: 12px; padding: 14px; overflow: auto; max-height: 420px; font-size: 12px; line-height: 1.5; }
   .hidden { display: none; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
   .seg button { border: none; background: var(--panel); color: var(--muted); padding: 8px 14px; cursor: pointer; font-weight: 600; }
   .seg button.active { background: rgba(109,40,217,.12); color: var(--accent); }
   .toast { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }
-  .toast div { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: 11px 14px; border-radius: 10px; box-shadow: var(--shadow); max-width: 360px; }
+  .toast div { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: 11px 14px; border-radius: 10px; box-shadow: var(--shadow); max-width: 380px; }
   .toast div.err { border-left-color: var(--danger); }
   .toast div.ok { border-left-color: var(--ok); }
-  .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
   .switch input { width: auto; }
   .note { font-size: 12.5px; color: var(--muted); }
   hr { border: none; border-top: 1px solid var(--line); margin: 18px 0; }
+  /* Database cards */
+  .dbcard { border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-top: 12px; background: var(--panel); }
+  .dbhead { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .dbhead b { font-size: 16px; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .badge.active { background: rgba(22,163,74,.12); color: var(--ok); }
+  .badge.pending { background: rgba(217,119,6,.14); color: var(--amber); }
+  .connrow { display: flex; gap: 10px; align-items: center; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+  .connrow code { flex: 1; overflow: auto; white-space: nowrap; }
+  .empty { text-align: center; color: var(--muted); padding: 30px; }
+  iframe.metrics { width: 100%; height: 540px; border: 1px solid var(--line); border-radius: 12px; }
 </style>
 </head>
 <body>
@@ -88,8 +89,7 @@
   <aside class="side">
     <div class="brand"><div class="logo"></div><div><b>AethelDB</b><br><small>console</small></div></div>
     <div class="nav active" data-view="overview"><span class="dot"></span> Overview</div>
-    <div class="nav" data-view="tenants"><span class="dot"></span> Tenants</div>
-    <div class="nav" data-view="branches"><span class="dot"></span> Branches &amp; PITR</div>
+    <div class="nav" data-view="databases"><span class="dot"></span> Databases</div>
     <div class="nav" data-view="deploy"><span class="dot"></span> Deploy</div>
     <div class="grow"></div>
     <div class="conn"><span class="pill" id="connPill"></span><span id="connText">connecting…</span></div>
@@ -99,62 +99,43 @@
   <main class="main">
     <!-- Overview -->
     <section id="overview">
-      <div class="head"><div><h1>Overview</h1><p>Serverless PostgreSQL — compute, storage, and branches at a glance.</p></div>
+      <div class="head"><div><h1>Overview</h1><p>Serverless PostgreSQL — provision databases and deploy clusters.</p></div>
         <button class="btn" onclick="refreshAll()">↻ Refresh</button></div>
       <div class="grid cards">
-        <div class="card"><h3>Control plane</h3><div class="stat" id="ovHealth">—</div><div class="muted mono" id="ovServer"></div></div>
-        <div class="card"><h3>Tenants</h3><div class="stat" id="ovTenants">—</div></div>
-        <div class="card"><h3>Timelines (root)</h3><div class="stat" id="ovTimelines">—</div></div>
-        <div class="card"><h3>Branching</h3><div class="stat">O(1)<small> · copy-on-write</small></div><div class="muted">instant branches + PITR</div></div>
+        <div class="card"><h3>Cluster</h3><div class="stat" id="ovHealth">—</div><div class="muted mono" id="ovServer"></div></div>
+        <div class="card"><h3>Databases</h3><div class="stat" id="ovDbs">—</div></div>
+        <div class="card"><h3>Compute</h3><div class="stat">Auto<small> · scale-to-zero</small></div><div class="muted">no capacity to configure</div></div>
+        <div class="card"><h3>Recovery</h3><div class="stat">PITR<small> · built-in</small></div><div class="muted">branch any point in time</div></div>
       </div>
-      <div class="card" style="margin-top:16px"><h3>What you can do here</h3>
-        <p class="muted">Create and isolate <b>tenants</b>, branch any timeline at any LSN (point-in-time recovery), run GC, and <b>deploy</b> a production cluster to on-prem or AWS / Azure / GCP — with autoscaling and availability best practices — from the Deploy tab.</p>
-      </div>
-      <div class="card" id="metricsCard" style="margin-top:16px"><h3>Metrics</h3>
-        <div id="metricsBody"><p class="muted">Start the console with <code>--grafana-url &lt;url&gt;</code> to embed live Grafana panels here (see <code>deploy/monitoring/</code>).</p></div>
+      <div class="card" style="margin-top:16px"><h3>Metrics</h3>
+        <div id="metricsBody"><p class="muted">Start the console with <code>--grafana-url &lt;url&gt;</code> to embed live Grafana panels here.</p></div>
       </div>
     </section>
 
-    <!-- Tenants -->
-    <section id="tenants" class="hidden">
-      <div class="head"><div><h1>Tenants</h1><p>Each tenant is a fully isolated database with its own branches.</p></div></div>
+    <!-- Databases -->
+    <section id="databases" class="hidden">
+      <div class="head"><div><h1>Databases</h1><p>Create a database and connect — it scales to zero when idle, no sizing required.</p></div></div>
       <div class="card">
         <div class="row">
-          <div class="field"><label>New tenant id (32 hex chars)</label><input id="tenantId" placeholder="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" /></div>
-          <button class="btn primary" onclick="createTenant()">Create tenant</button>
+          <div class="field"><label>Database name</label><input id="dbName" placeholder="orders" onkeydown="if(event.key==='Enter')createDatabase()" /></div>
+          <button class="btn primary" onclick="createDatabase()">Create database</button>
         </div>
+        <p class="note" style="margin:10px 0 0">Serverless by default — there's nothing to size. You get a connection string instantly.</p>
       </div>
-      <div class="card" style="margin-top:16px"><table><thead><tr><th>Tenant id</th><th></th></tr></thead><tbody id="tenantRows"></tbody></table></div>
-    </section>
-
-    <!-- Branches -->
-    <section id="branches" class="hidden">
-      <div class="head"><div><h1>Branches &amp; PITR</h1><p>Branch a timeline at any LSN — that branch <em>is</em> a point-in-time recovery.</p></div></div>
-      <div class="card">
-        <div class="row">
-          <div class="field"><label>Tenant</label><select id="brTenant" onchange="loadTimelines()"></select></div>
-          <button class="btn ghost" onclick="loadTimelines()">↻</button>
-        </div>
-        <hr>
-        <div class="row">
-          <div class="field"><label>Create root timeline (id)</label><input id="tlId" placeholder="00…00" /></div>
-          <button class="btn" onclick="createTimeline()">Create timeline</button>
-        </div>
-        <hr>
-        <div class="row">
-          <div class="field"><label>Branch / PITR — new id</label><input id="brNew" placeholder="0b…0b" /></div>
-          <div class="field"><label>from parent</label><input id="brParent" placeholder="00…00" /></div>
-          <div class="field" style="max-width:140px"><label>at LSN</label><input id="brLsn" type="number" value="0" /></div>
-          <button class="btn primary" onclick="createBranch()">Branch</button>
-        </div>
-      </div>
-      <div class="card" style="margin-top:16px"><table><thead><tr><th>Timeline id</th><th>Kind</th></tr></thead><tbody id="tlRows"></tbody></table></div>
+      <div id="dbList"></div>
     </section>
 
     <!-- Deploy -->
     <section id="deploy" class="hidden">
-      <div class="head"><div><h1>Deploy</h1><p>Stand up a production cluster — on-prem or any cloud — with autoscaling and best practices.</p></div></div>
+      <div class="head"><div><h1>Deploy a cluster</h1><p>Stand up AethelDB on-prem or in your own cloud account — in a few clicks.</p></div></div>
       <div class="card">
+        <label>Start from a preset</label>
+        <div class="row" style="margin-bottom:6px">
+          <button class="btn" onclick="applyPreset('local')">🖥️ Local / dev</button>
+          <button class="btn" onclick="applyPreset('prod')">☁️ Production (cloud)</button>
+          <span class="note">Presets fill in best-practice defaults — tweak anything below.</span>
+        </div>
+        <hr>
         <label>Target</label>
         <div class="seg" id="cloudSeg">
           <button class="active" data-cloud="">On-prem</button>
@@ -165,36 +146,31 @@
         <div class="row" style="margin-top:14px">
           <div class="field"><label>Namespace</label><input id="dpNs" value="aethel" /></div>
           <div class="field"><label>Release</label><input id="dpRelease" value="aethel" /></div>
+          <div class="field"><label>Object storage URL</label><input id="dpObj" placeholder="s3://my-bucket | az://container | gs://bucket" /></div>
         </div>
         <div class="row">
-          <div class="field"><label>Object store URL</label><input id="dpObj" placeholder="s3://my-bucket | az://container | gs://bucket" /></div>
-        </div>
-        <div class="row">
-          <div class="field"><label>Image repo</label><input id="dpRepo" placeholder="ghcr.io/you/aetheldb" /></div>
-          <div class="field"><label>Image tag</label><input id="dpTag" placeholder="v0.2.0" /></div>
-        </div>
-        <div class="row">
-          <div class="field" style="max-width:170px"><label>Safekeeper replicas</label><input id="dpSk" type="number" value="3" /></div>
-          <div class="field" style="max-width:170px"><label>Proxy autoscale min</label><input id="dpMin" type="number" value="2" /></div>
-          <div class="field" style="max-width:170px"><label>Proxy autoscale max</label><input id="dpMax" type="number" value="10" /></div>
+          <div class="field"><label>Image repo (optional once images are published)</label><input id="dpRepo" placeholder="ghcr.io/you/aetheldb" /></div>
+          <div class="field" style="max-width:160px"><label>Image tag</label><input id="dpTag" placeholder="v0.2.0" /></div>
+          <div class="field" style="max-width:150px"><label>Safekeepers</label><input id="dpSk" type="number" value="3" /></div>
         </div>
         <div class="row" style="margin-top:6px; gap:22px">
-          <label class="switch"><input type="checkbox" id="dpAuto" checked> Autoscale proxy (HPA)</label>
-          <label class="switch"><input type="checkbox" id="dpPdb" checked> PodDisruptionBudgets</label>
+          <label class="switch"><input type="checkbox" id="dpAuto" checked> Autoscale proxy</label>
+          <label class="switch"><input type="checkbox" id="dpPdb" checked> High availability</label>
           <label class="switch"><input type="checkbox" id="dpSpread" checked> Spread across nodes</label>
-          <label class="switch"><input type="checkbox" id="dpExpose"> Expose proxy (LoadBalancer)</label>
-          <label class="switch"><input type="checkbox" id="dpPool"> PgBouncer pooling</label>
+          <label class="switch"><input type="checkbox" id="dpExpose"> Public endpoint</label>
+          <label class="switch"><input type="checkbox" id="dpPool"> Connection pooling</label>
         </div>
+        <input id="dpMin" type="hidden" value="2" /><input id="dpMax" type="hidden" value="10" />
         <hr>
         <div class="row">
           <button class="btn primary" onclick="previewDeploy()">Preview (dry-run)</button>
           <button class="btn" onclick="copyCmd()">Copy CLI command</button>
-          <button class="btn" id="applyBtn" style="display:none; border-color:var(--danger); color:var(--danger)" onclick="applyDeploy()">Apply ▶</button>
-          <span class="note" id="dpHint">Preview runs <code>helm --dry-run</code> against your current kube-context. Nothing is applied.</span>
+          <button class="btn" id="applyBtn" style="display:none; border-color:var(--danger); color:var(--danger)" onclick="applyDeploy()">Deploy ▶</button>
+          <span class="note" id="dpHint">Preview renders the manifests with <code>helm --dry-run</code>. Nothing is applied.</span>
         </div>
       </div>
       <div class="card hidden" id="dpResult" style="margin-top:16px">
-        <h3>Rendered manifests (dry-run)</h3>
+        <h3>Rendered manifests</h3>
         <div class="mono note" id="dpCmd" style="margin-bottom:10px"></div>
         <pre class="out" id="dpOut"></pre>
       </div>
@@ -207,108 +183,90 @@
 const $ = (s) => document.querySelector(s);
 const api = async (method, path, body) => {
   const r = await fetch(path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
-  const text = await r.text();
-  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  const text = await r.text(); let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
   if (!r.ok) throw new Error(data.error || data.raw || ("HTTP " + r.status));
   return data;
 };
-function toast(msg, kind) { const t = document.createElement("div"); t.className = kind || ""; t.textContent = msg; $("#toast").append(t); setTimeout(() => t.remove(), 4200); }
+function toast(msg, kind) { const t = document.createElement("div"); t.className = kind || ""; t.textContent = msg; $("#toast").append(t); setTimeout(() => t.remove(), 4500); }
+async function copyText(s) { try { await navigator.clipboard.writeText(s); toast("Copied", "ok"); } catch { toast("Copy failed", "err"); } }
 
-// Navigation
 document.querySelectorAll(".nav[data-view]").forEach(n => n.onclick = () => show(n.dataset.view));
 function show(view) {
   document.querySelectorAll(".nav[data-view]").forEach(n => n.classList.toggle("active", n.dataset.view === view));
-  ["overview","tenants","branches","deploy"].forEach(v => $("#"+v).classList.toggle("hidden", v !== view));
-  if (view === "tenants") loadTenants();
-  if (view === "branches") loadTenantsInto("#brTenant").then(loadTimelines);
+  ["overview","databases","deploy"].forEach(v => $("#"+v).classList.toggle("hidden", v !== view));
+  if (view === "databases") loadDatabases();
 }
 $("#themeToggle").onclick = () => { const h = document.documentElement; h.dataset.theme = h.dataset.theme === "dark" ? "light" : "dark"; };
 
-// Connection + overview
 async function refreshAll() {
   try {
     const s = await api("GET", "/api/status");
     $("#connPill").className = "pill ok"; $("#connText").textContent = "connected";
-    $("#ovHealth").textContent = "OK"; $("#ovServer").textContent = s.server || "";
-    $("#ovTenants").textContent = (s.tenants || []).length;
-    $("#ovTimelines").textContent = (s.timelines || []).length;
+    $("#ovHealth").textContent = "Healthy"; $("#ovServer").textContent = s.server || "";
+    $("#ovDbs").textContent = s.databases ?? 0;
     $("#applyBtn").style.display = s.allowApply ? "inline-block" : "none";
     $("#dpHint").innerHTML = s.allowApply
-      ? 'Preview runs <code>helm --dry-run</code>; <b>Apply</b> runs it for real against your kube-context.'
-      : 'Preview runs <code>helm --dry-run</code>. Restart with <code>--allow-apply</code> to enable Apply.';
-    if (s.grafanaUrl) {
-      $("#metricsBody").innerHTML = `<iframe src="${s.grafanaUrl}/d/aetheldb-overview/aetheldb-overview?kiosk&refresh=15s&theme=light" style="width:100%;height:540px;border:1px solid var(--line);border-radius:12px"></iframe>`;
-    }
+      ? 'Preview renders with <code>helm --dry-run</code>; <b>Deploy</b> applies it to your kube-context.'
+      : 'Preview renders with <code>helm --dry-run</code>. Restart with <code>--allow-apply</code> to deploy from here.';
+    if (s.grafanaUrl) $("#metricsBody").innerHTML = `<iframe class="metrics" src="${s.grafanaUrl}/d/aetheldb-overview/aetheldb-overview?kiosk&refresh=15s&theme=light"></iframe>`;
   } catch (e) {
     $("#connPill").className = "pill bad"; $("#connText").textContent = "disconnected";
-    $("#ovHealth").textContent = "—"; toast("Control plane unreachable: " + e.message, "err");
+    $("#ovHealth").textContent = "—"; toast("Cluster unreachable: " + e.message, "err");
   }
 }
 
-// Tenants
-async function loadTenants() {
-  const { tenants } = await api("GET", "/api/tenants").catch(() => ({ tenants: [] }));
-  $("#tenantRows").innerHTML = tenants.map(t => `<tr><td><code>${t}</code></td><td class="muted">isolated</td></tr>`).join("") || `<tr><td class="muted">no tenants yet</td></tr>`;
+// Databases
+async function loadDatabases() {
+  let data; try { data = await api("GET", "/api/databases"); } catch (e) { toast(e.message, "err"); return; }
+  const dbs = data.databases || [];
+  if (!dbs.length) { $("#dbList").innerHTML = `<div class="card"><div class="empty">No databases yet — create one above to get a connection string.</div></div>`; return; }
+  $("#dbList").innerHTML = dbs.map(d => `
+    <div class="dbcard">
+      <div class="dbhead"><b>${d.name}</b><span class="badge ${d.status}">${d.status === 'active' ? '● active' : '○ pending'}</span></div>
+      <div class="connrow"><code>${d.connection}</code><button class="btn sm" onclick="copyText('${d.connection}')">Copy</button></div>
+    </div>`).join("");
 }
-async function createTenant() {
-  const id = $("#tenantId").value.trim(); if (!id) return;
-  try { await api("POST", "/api/tenants", { id }); toast("Created tenant " + id, "ok"); $("#tenantId").value = ""; loadTenants(); refreshAll(); }
-  catch (e) { toast(e.message, "err"); }
-}
-async function loadTenantsInto(sel) {
-  const { tenants } = await api("GET", "/api/tenants").catch(() => ({ tenants: [] }));
-  const root = "00000000000000000000000000000000";
-  const opts = [root, ...tenants.filter(t => t !== root)];
-  $(sel).innerHTML = opts.map(t => `<option value="${t}">${t === root ? "root ("+root.slice(0,8)+"…)" : t}</option>`).join("");
-}
-
-// Branches
-async function loadTimelines() {
-  const tenant = $("#brTenant").value;
-  const { timelines } = await api("GET", "/api/timelines?tenant=" + tenant).catch(() => ({ timelines: [] }));
-  const root = "00000000000000000000000000000000";
-  $("#tlRows").innerHTML = timelines.map(t => `<tr><td><code>${t}</code></td><td>${t === root ? '<span class="tag root">root</span>' : '<span class="tag branch">branch</span>'}</td></tr>`).join("") || `<tr><td class="muted">no timelines — create one above</td></tr>`;
-}
-async function createTimeline() {
-  const id = $("#tlId").value.trim(), tenant = $("#brTenant").value; if (!id) return;
-  try { await api("POST", "/api/timelines", { id, tenant }); toast("Created timeline", "ok"); $("#tlId").value=""; loadTimelines(); }
-  catch (e) { toast(e.message, "err"); }
-}
-async function createBranch() {
-  const timeline = $("#brNew").value.trim(), parent = $("#brParent").value.trim(), lsn = Number($("#brLsn").value||0), tenant = $("#brTenant").value;
-  if (!timeline || !parent) return;
-  try { await api("POST", "/api/branches", { timeline, parent, lsn, tenant }); toast(`Branched at LSN ${lsn} (PITR point)`, "ok"); loadTimelines(); }
+async function createDatabase() {
+  const name = $("#dbName").value.trim(); if (!name) return;
+  try { const d = await api("POST", "/api/databases", { name }); toast(`Database "${d.name}" ready`, "ok"); $("#dbName").value=""; loadDatabases(); refreshAll(); }
   catch (e) { toast(e.message, "err"); }
 }
 
 // Deploy
 let cloud = "";
-document.querySelectorAll("#cloudSeg button").forEach(b => b.onclick = () => {
-  document.querySelectorAll("#cloudSeg button").forEach(x => x.classList.remove("active"));
-  b.classList.add("active"); cloud = b.dataset.cloud;
-  if (cloud) $("#dpExpose").checked = true;
-  const ph = { aws: "s3://my-bucket", azure: "az://my-container", gcp: "gs://my-bucket", "": "s3://my-bucket | az://… | gs://…" };
-  $("#dpObj").placeholder = ph[cloud];
-});
+document.querySelectorAll("#cloudSeg button").forEach(b => b.onclick = () => setCloud(b.dataset.cloud));
+function setCloud(c) {
+  cloud = c;
+  document.querySelectorAll("#cloudSeg button").forEach(x => x.classList.toggle("active", x.dataset.cloud === c));
+  if (c) $("#dpExpose").checked = true;
+  const ph = { aws: "s3://my-bucket", azure: "az://my-container", gcp: "gs://my-bucket", "": "(local PVC — leave empty for on-prem dev)" };
+  $("#dpObj").placeholder = ph[c];
+}
+function applyPreset(p) {
+  if (p === "local") {
+    setCloud(""); $("#dpObj").value=""; $("#dpSk").value=1;
+    $("#dpAuto").checked=false; $("#dpPdb").checked=false; $("#dpSpread").checked=false; $("#dpExpose").checked=false; $("#dpPool").checked=false;
+    toast("Local/dev preset applied", "ok");
+  } else {
+    if (!cloud) setCloud("aws");
+    $("#dpSk").value=3; $("#dpAuto").checked=true; $("#dpPdb").checked=true; $("#dpSpread").checked=true; $("#dpExpose").checked=true;
+    toast("Production preset — set your object storage + image", "ok");
+  }
+}
 function deployBody() {
   return {
     cloud, namespace: $("#dpNs").value, release: $("#dpRelease").value,
     objectStoreUrl: $("#dpObj").value.trim() || null,
     imageRepo: $("#dpRepo").value.trim() || null, imageTag: $("#dpTag").value.trim() || null,
-    expose: $("#dpExpose").checked,
-    safekeeperReplicas: Number($("#dpSk").value || 1),
+    expose: $("#dpExpose").checked, safekeeperReplicas: Number($("#dpSk").value || 1),
     autoscaling: $("#dpAuto").checked, autoMin: Number($("#dpMin").value||2), autoMax: Number($("#dpMax").value||10),
     pdb: $("#dpPdb").checked, spread: $("#dpSpread").checked, pooling: $("#dpPool").checked,
   };
 }
 async function previewDeploy() {
   $("#dpResult").classList.remove("hidden"); $("#dpOut").textContent = "running helm --dry-run…"; $("#dpCmd").textContent = "";
-  try {
-    const r = await api("POST", "/api/deploy/preview", deployBody());
-    $("#dpCmd").textContent = r.command || "";
-    $("#dpOut").textContent = r.output || "(no output)";
-    toast("Dry-run rendered — review and apply with the CLI", "ok");
-  } catch (e) { $("#dpOut").textContent = e.message; toast("Preview failed", "err"); }
+  try { const r = await api("POST", "/api/deploy/preview", deployBody()); $("#dpCmd").textContent = r.command || ""; $("#dpOut").textContent = r.output || "(no output)"; toast("Dry-run rendered", "ok"); }
+  catch (e) { $("#dpOut").textContent = e.message; toast("Preview failed", "err"); }
 }
 async function copyCmd() {
   try { const r = await api("POST", "/api/deploy/command", deployBody()); await navigator.clipboard.writeText(r.command); toast("CLI command copied", "ok"); }
@@ -316,15 +274,15 @@ async function copyCmd() {
 }
 async function applyDeploy() {
   const b = deployBody();
-  if (!confirm(`Apply release "${b.release}" to namespace "${b.namespace}" on your current kube-context?\n\nThis runs helm for real.`)) return;
-  $("#dpResult").classList.remove("hidden"); $("#dpCmd").textContent = "helm upgrade --install (live)"; $("#dpOut").textContent = "applying…\n";
+  if (!confirm(`Deploy release "${b.release}" to namespace "${b.namespace}" on your current kube-context?\n\nThis runs helm for real.`)) return;
+  $("#dpResult").classList.remove("hidden"); $("#dpCmd").textContent = "helm upgrade --install (live)"; $("#dpOut").textContent = "deploying…\n";
   try {
     const r = await fetch("/api/deploy/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
     if (!r.ok || !r.body) throw new Error(await r.text());
     const reader = r.body.getReader(), dec = new TextDecoder(); let out = "";
     while (true) { const { done, value } = await reader.read(); if (done) break; out += dec.decode(value, { stream: true }); $("#dpOut").textContent = out; $("#dpOut").scrollTop = $("#dpOut").scrollHeight; }
-    toast("Apply finished — check the output", "ok");
-  } catch (e) { $("#dpOut").textContent += "\n" + e.message; toast("Apply failed", "err"); }
+    toast("Deploy finished — check the output", "ok");
+  } catch (e) { $("#dpOut").textContent += "\n" + e.message; toast("Deploy failed", "err"); }
 }
 
 refreshAll(); setInterval(refreshAll, 15000);
