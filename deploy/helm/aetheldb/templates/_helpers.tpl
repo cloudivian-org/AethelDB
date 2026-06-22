@@ -33,3 +33,18 @@ helm.sh/chart: aetheldb-{{ .Chart.Version }}
 {{- define "aetheldb.manageSecret" -}}
 {{- if and (not .Values.objectStore.existingSecret) (or .Values.objectStore.credentials (and .Values.controlToken.value (not .Values.controlToken.existingSecret))) }}true{{- end }}
 {{- end -}}
+
+{{/* Pod topology-spread constraints for a component. Usage:
+     include "aetheldb.topologySpread" (dict "root" $ "component" "safekeeper") */}}
+{{- define "aetheldb.topologySpread" -}}
+{{- if .root.Values.topologySpread.enabled }}
+topologySpreadConstraints:
+  - maxSkew: {{ .root.Values.topologySpread.maxSkew }}
+    topologyKey: {{ .root.Values.topologySpread.topologyKey }}
+    whenUnsatisfiable: {{ .root.Values.topologySpread.whenUnsatisfiable }}
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/instance: {{ .root.Release.Name }}
+        aethel.component: {{ .component }}
+{{- end }}
+{{- end -}}

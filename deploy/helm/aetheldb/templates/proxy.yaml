@@ -22,7 +22,9 @@ metadata:
   labels:
     {{- include "aetheldb.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.proxy.enabled }}
   replicas: {{ .Values.proxy.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
@@ -42,6 +44,7 @@ spec:
       {{- if .Values.proxy.activator.kubernetes }}
       serviceAccountName: {{ include "aetheldb.fullname" . }}-proxy
       {{- end }}
+      {{- include "aetheldb.topologySpread" (dict "root" $ "component" "proxy") | nindent 6 }}
       containers:
         - name: proxy
           image: {{ include "aetheldb.image" (dict "svc" "proxy" "root" $) }}

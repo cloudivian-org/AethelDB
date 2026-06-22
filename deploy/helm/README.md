@@ -106,6 +106,32 @@ controlToken:
   value: "a-long-random-secret"   # requires auth on :6402 / :6403 (/healthz stays open)
 ```
 
+## Autoscaling & availability (production best practices)
+
+All opt-in; defaults preserve single-replica behavior.
+
+```yaml
+autoscaling:
+  proxy:                 # HPA on the stateless proxy (its replicas become HPA-managed)
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:     # keep quorum / ingress during node drains & upgrades
+  safekeeper: { enabled: true, minAvailable: 2 }   # for a 3-replica quorum
+  proxy:      { enabled: true, minAvailable: 1 }
+
+topologySpread:          # spread the quorum & proxies across nodes/zones
+  enabled: true
+  topologyKey: topology.kubernetes.io/zone   # or kubernetes.io/hostname
+```
+
+> The page server and safekeeper are **stateful** and scaled deliberately
+> (`safekeeper.replicas`), not by an HPA. The HPA targets only the stateless
+> proxy. Pair `topologySpread` with a real `topologyKey` (zone) on multi-AZ
+> clusters for genuine fault isolation.
+
 ## Options
 
 | Value | Default | Purpose |
