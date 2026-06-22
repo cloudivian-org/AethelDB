@@ -18,6 +18,12 @@ pooling, control-plane auth, and full observability — on top of the 0.1.0 data
 plane.
 
 ### Added
+- **Web console** (`aethelctl serve`): an embedded single-page GUI to operate
+  (tenants, branches, PITR, GC) and **deploy** (on-prem / AWS / Azure / GCP, with
+  autoscaling + availability toggles and a live `helm --dry-run` preview). The
+  browser never holds the control token — the local server proxies it.
+- **Helm autoscaling & availability** (opt-in): HPA for the proxy,
+  PodDisruptionBudgets, and topology spread.
 - **`aethelctl` CLI**: a scriptable client over the control plane —
   `status` / `tenant` / `timeline` / `branch` (alias `pitr`) / `receive` / `gc`,
   with `--json` output and bearer-token auth — plus `up` / `down` (Docker

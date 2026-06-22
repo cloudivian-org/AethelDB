@@ -10,6 +10,7 @@
 //! `Authorization: Bearer` header on every request.
 
 pub mod deploy;
+pub mod serve;
 
 use anyhow::{bail, Result};
 use serde_json::{json, Value};

@@ -1,0 +1,197 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The AethelDB Authors
+
+//! The `aethelctl serve` web console.
+//!
+//! A small blocking HTTP server (`tiny_http`) that serves an embedded
+//! single-page app and a JSON API. The API **proxies the control plane** (so the
+//! browser never needs the token) and renders **deploy dry-runs** via the
+//! embedded Helm chart. It runs on localhost by default — like `helm` or `k9s`,
+//! it acts with the operator's own `kubectl` context.
+
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
+use tiny_http::{Header, Method, Response, Server};
+
+use crate::deploy::{self, DeployOpts};
+use crate::Client;
+
+/// The embedded console SPA.
+const INDEX_HTML: &str = include_str!("../console/index.html");
+
+type Reply = (u16, String, &'static str);
+const JSON: &str = "application/json";
+
+/// Serve the console on `listen`, proxying control-plane calls to `control_url`.
+pub fn serve(listen: &str, control_url: String, token: Option<String>) -> Result<()> {
+    let server = Server::http(listen).map_err(|e| anyhow!("binding {listen}: {e}"))?;
+    let client = Client::new(control_url.clone(), token);
+    println!("AethelDB console → http://{listen}");
+    println!("  control plane: {control_url}");
+
+    for mut req in server.incoming_requests() {
+        let method = req.method().clone();
+        let url = req.url().to_string();
+        let body = read_body(&mut req);
+        let (status, payload, ctype) = route(&method, &url, &body, &client, &control_url);
+        let header = Header::from_bytes(&b"Content-Type"[..], ctype.as_bytes()).unwrap();
+        let _ = req
+            .respond(Response::from_string(payload).with_status_code(status).with_header(header));
+    }
+    Ok(())
+}
+
+fn read_body(req: &mut tiny_http::Request) -> String {
+    let mut s = String::new();
+    let _ = req.as_reader().read_to_string(&mut s);
+    s
+}
+
+fn route(method: &Method, url: &str, body: &str, client: &Client, control_url: &str) -> Reply {
+    let path = url.split('?').next().unwrap_or("");
+    match (method, path) {
+        (Method::Get, "/") | (Method::Get, "/index.html") => {
+            (200, INDEX_HTML.to_string(), "text/html; charset=utf-8")
+        }
+        (Method::Get, "/api/status") => api(status(client, control_url)),
+        (Method::Get, "/api/tenants") => {
+            api(client.list_tenants().map(|t| json!({ "tenants": t })))
+        }
+        (Method::Post, "/api/tenants") => api(do_create_tenant(client, body)),
+        (Method::Get, "/api/timelines") => {
+            let tenant = query_param(url, "tenant");
+            api(client.list_timelines(tenant.as_deref()).map(|t| json!({ "timelines": t })))
+        }
+        (Method::Post, "/api/timelines") => api(do_create_timeline(client, body)),
+        (Method::Post, "/api/branches") => api(do_branch(client, body)),
+        (Method::Post, "/api/gc") => api(do_gc(client, body)),
+        (Method::Post, "/api/deploy/preview") => api(deploy_preview(body)),
+        (Method::Post, "/api/deploy/command") => api(deploy_command(body)),
+        _ => (404, json!({ "error": "not found" }).to_string(), JSON),
+    }
+}
+
+/// Turn a `Result<Value>` into an HTTP reply (200 or 400 with `{error}`).
+fn api(r: Result<Value>) -> Reply {
+    match r {
+        Ok(v) => (200, v.to_string(), JSON),
+        Err(e) => (400, json!({ "error": format!("{e:#}") }).to_string(), JSON),
+    }
+}
+
+fn status(client: &Client, control_url: &str) -> Result<Value> {
+    client.healthz()?;
+    let tenants = client.list_tenants()?;
+    let timelines = client.list_timelines(None)?;
+    Ok(json!({ "server": control_url, "tenants": tenants, "timelines": timelines }))
+}
+
+fn do_create_tenant(client: &Client, body: &str) -> Result<Value> {
+    let b = parse(body);
+    client.create_tenant(field(&b, "id")?)
+}
+fn do_create_timeline(client: &Client, body: &str) -> Result<Value> {
+    let b = parse(body);
+    client.create_timeline(field(&b, "id")?, opt(&b, "tenant"))
+}
+fn do_branch(client: &Client, body: &str) -> Result<Value> {
+    let b = parse(body);
+    let lsn = b.get("lsn").and_then(|v| v.as_u64()).unwrap_or(0);
+    client.branch(field(&b, "timeline")?, field(&b, "parent")?, lsn, opt(&b, "tenant"))
+}
+fn do_gc(client: &Client, body: &str) -> Result<Value> {
+    let b = parse(body);
+    let horizon = b.get("horizon_lsn").and_then(|v| v.as_u64()).unwrap_or(0);
+    client.gc(horizon, opt(&b, "tenant"))
+}
+
+fn deploy_preview(body: &str) -> Result<Value> {
+    let opts = deploy_opts(&parse(body), true);
+    let output = deploy::deploy_capture(&opts, None)?;
+    Ok(json!({ "ok": true, "command": deploy::command_preview(&opts), "output": output }))
+}
+fn deploy_command(body: &str) -> Result<Value> {
+    let opts = deploy_opts(&parse(body), false);
+    Ok(json!({ "command": deploy::command_preview(&opts) }))
+}
+
+/// Map the console's deploy form to `DeployOpts` + chart `--set` overrides.
+fn deploy_opts(b: &Value, dry_run: bool) -> DeployOpts {
+    let s =
+        |k: &str| b.get(k).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_owned);
+    let flag = |k: &str| b.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    let num = |k: &str, d: i64| b.get(k).and_then(|v| v.as_i64()).unwrap_or(d);
+    let cloud = s("cloud").unwrap_or_default();
+
+    let sets = vec![
+        format!("safekeeper.replicas={}", num("safekeeperReplicas", 1)),
+        format!("autoscaling.proxy.enabled={}", flag("autoscaling")),
+        format!("autoscaling.proxy.minReplicas={}", num("autoMin", 2)),
+        format!("autoscaling.proxy.maxReplicas={}", num("autoMax", 10)),
+        format!("podDisruptionBudget.safekeeper.enabled={}", flag("pdb")),
+        format!("podDisruptionBudget.proxy.enabled={}", flag("pdb")),
+        format!("topologySpread.enabled={}", flag("spread")),
+        format!("pooling.enabled={}", flag("pooling")),
+    ];
+
+    DeployOpts {
+        release: s("release").unwrap_or_else(|| "aethel".into()),
+        namespace: s("namespace").unwrap_or_else(|| "aethel".into()),
+        values_files: vec![],
+        sets,
+        object_store_url: s("objectStoreUrl"),
+        image_repo: s("imageRepo"),
+        image_tag: s("imageTag"),
+        expose: flag("expose") || !cloud.is_empty(),
+        wait: false,
+        dry_run,
+    }
+}
+
+// ---- small helpers ----
+fn parse(body: &str) -> Value {
+    serde_json::from_str(body).unwrap_or(Value::Null)
+}
+fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
+    v.get(key).and_then(|x| x.as_str()).ok_or_else(|| anyhow!("missing field `{key}`"))
+}
+fn opt<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
+    v.get(key).and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+}
+fn query_param(url: &str, key: &str) -> Option<String> {
+    url.split_once('?')?.1.split('&').find_map(|kv| {
+        let (k, val) = kv.split_once('=')?;
+        (k == key).then(|| val.to_string())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deploy_opts_map_cloud_and_toggles() {
+        let body = json!({
+            "cloud": "aws", "namespace": "ns", "release": "r",
+            "objectStoreUrl": "s3://b", "imageRepo": "me/x", "imageTag": "v1",
+            "safekeeperReplicas": 3, "autoscaling": true, "autoMin": 2, "autoMax": 9,
+            "pdb": true, "spread": true, "pooling": false, "expose": false
+        });
+        let o = deploy_opts(&body, true);
+        assert_eq!(o.namespace, "ns");
+        assert_eq!(o.object_store_url.as_deref(), Some("s3://b"));
+        assert!(o.expose, "a cloud target should expose the proxy");
+        assert!(o.dry_run);
+        let joined = o.sets.join(" ");
+        assert!(joined.contains("safekeeper.replicas=3"));
+        assert!(joined.contains("autoscaling.proxy.enabled=true"));
+        assert!(joined.contains("autoscaling.proxy.maxReplicas=9"));
+        assert!(joined.contains("topologySpread.enabled=true"));
+    }
+
+    #[test]
+    fn query_param_extracts_tenant() {
+        assert_eq!(query_param("/api/timelines?tenant=abc", "tenant"), Some("abc".into()));
+        assert_eq!(query_param("/api/timelines", "tenant"), None);
+    }
+}
