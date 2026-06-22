@@ -9,6 +9,8 @@
 //! control token is configured on the server, pass it here and it is sent as a
 //! `Authorization: Bearer` header on every request.
 
+pub mod deploy;
+
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 

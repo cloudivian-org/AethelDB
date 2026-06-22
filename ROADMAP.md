@@ -64,16 +64,18 @@ not a rewrite. The plan turns that into a one-liner.
 - **Outcome:** `helm install` on EKS/AKS/GKE (pointed at S3/Blob/GCS) is a working
   cloud deploy today.
 
-### Phase 2 — `aethelctl` CLI
+### Phase 2 — `aethelctl` CLI — ✅ shipped (provisioning is next)
 *A new binary over the existing HTTP control plane; the engine is unaware of it.*
-- **Operate:** `aethelctl tenant|branch|pitr|gc|status` — wraps the HTTP control
-  plane (honoring the bearer token).
-- **Run locally:** `aethelctl up` (compose / kind).
-- **Deploy to cloud:** `aethelctl deploy --cloud aws|azure|gcp --region …` —
-  renders the Helm chart onto a target cluster, or provisions a turnkey stack via
-  embedded Terraform modules (managed K8s + bucket + IAM + DNS). **BYOC by
-  default** — it runs in *your* account.
-- Shipped as a single static Rust binary, in keeping with the project.
+- **Operate:** `aethelctl status | tenant | timeline | branch (alias pitr) |
+  receive | gc` — wraps the HTTP control plane, honoring the bearer token, with
+  `--json` output. ✅
+- **Run locally:** `aethelctl up` / `down` (Docker Compose). ✅
+- **Deploy to cloud:** `aethelctl deploy --cloud aws|azure|gcp …` — runs
+  `helm upgrade --install` of the **embedded** Helm chart onto the target
+  cluster (works from anywhere; no repo checkout needed). ✅
+- **Next:** `--region`-style turnkey provisioning via embedded Terraform modules
+  (managed K8s + bucket + IAM + DNS) for full **BYOC** in *your* account.
+- Shipped as a single Rust binary, in keeping with the project.
 
 ### Phase 3 — Operator + CRDs
 *Declarative management; composes with, doesn't replace, the control plane.*
