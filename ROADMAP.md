@@ -52,14 +52,15 @@ Every major cloud offers **managed Kubernetes** (EKS / AKS / GKE) and
 both abstractions, so cloud-portability is mostly *packaging and a thin driver* —
 not a rewrite. The plan turns that into a one-liner.
 
-### Phase 1 — Multi-cloud storage + Helm chart (foundation)
+### Phase 1 — Multi-cloud storage + Helm chart (foundation) — ✅ shipped
 *Additive: new `ObjectStore` impls + packaging; no engine change.*
 - **Azure Blob + GCS object-store backends** behind the existing `ObjectStore`
-  trait (the `object_store` crate already supports them; we wire them as opt-in
-  features/config alongside S3).
-- **Helm chart** packaging safekeeper / pageserver / proxy from the existing k8s
-  manifests, with values for the object-store backend, credentials (Secrets),
-  control token, and pooling.
+  trait — selected by `--object-store-url` (`s3://` / `az://` / `gs://`), creds
+  from standard env vars. S3 (MinIO) and Azure (Azurite) verified end-to-end.
+- **Helm chart** (`deploy/helm/aetheldb`) packaging safekeeper / pageserver /
+  proxy, with values for the object-store backend, credentials (Secrets), control
+  token, pooling, and the Kubernetes activator. Server-side validated on a real
+  cluster; see [`deploy/helm/README.md`](deploy/helm/README.md).
 - **Outcome:** `helm install` on EKS/AKS/GKE (pointed at S3/Blob/GCS) is a working
   cloud deploy today.
 

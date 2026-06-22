@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Default values for the AethelDB chart. Override with `-f my-values.yaml` or
+# `--set`. See deploy/helm/README.md for cloud-specific examples.
+
+# Optionally override the generated resource-name prefix (defaults to the
+# release name).
+fullnameOverride: ""
+
+image:
+  registry: docker.io
+  repository: aetheldb # org; per-service images are <repository>/<service>:<tag>
+  tag: dev # pin to a release tag or digest in production
+  pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# Object storage for offloaded layers — the "deploy to any cloud" knob.
+# Set `url` to one of:
+#   s3://my-bucket      (AWS S3 or S3-compatible)
+#   az://my-container   (Azure Blob)
+#   gs://my-bucket      (Google Cloud Storage)
+# When empty, the page server uses a local PVC directory (single-node only).
+# ---------------------------------------------------------------------------
+objectStore:
+  url: ""
+  allowHttp: false # set true only for local/in-cluster HTTP endpoints (e.g. MinIO)
+  # Credentials are injected as environment variables. Either reference an
+  # existing Secret, or provide key/values here (templated into a Secret):
+  #   AWS:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, (AWS_ENDPOINT)
+  #   Azure: AZURE_STORAGE_ACCOUNT_NAME, AZURE_STORAGE_ACCOUNT_KEY
+  #   GCS:   GOOGLE_SERVICE_ACCOUNT_KEY (JSON) — mounted, see README
+  existingSecret: ""
+  credentials: {}
+
+# Control-plane authentication. When set, the page server requires `auth <token>`
+# (line) / `Authorization: Bearer <token>` (HTTP). Stored in the chart Secret.
+controlToken:
+  value: ""
+  existingSecret: ""
+  secretKey: SP_PS_CONTROL_TOKEN
+
+safekeeper:
+  replicas: 1 # use 3 for a real quorum
+  nodeIdStart: 1
+  storage: 10Gi
+  storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+pageserver:
+  freezeThreshold: 100000
+  offloadTickSecs: 10
+  cacheStorage: 10Gi # local PVC for the working set / layer cache
+  storageClass: ""
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: "2", memory: 2Gi }
+
+proxy:
+  replicas: 1
+  # Static tenant routing for a simple deployment: "<db>=<host:port>" entries.
+  # Leave empty when using the Kubernetes activator (below).
+  tenants: []
+  idleSecs: 300
+  service:
+    type: ClusterIP # use LoadBalancer to expose :5432 to clients in the cloud
+    port: 5432
+  # Kubernetes-native scale-to-zero activator (requires an image built with the
+  # `kubernetes` feature). Grants scoped RBAC over compute Deployments' scale.
+  activator:
+    kubernetes: false
+  resources:
+    requests: { cpu: 100m, memory: 64Mi }
+    limits: { cpu: "1", memory: 256Mi }
+
+# Optional PgBouncer transaction-pooling tier (see deploy/pooling/).
+pooling:
+  enabled: false
+  image: edoburu/pgbouncer:latest
+  dbHost: compute
+  dbName: mydb
+  poolMode: transaction
+
+# Prometheus scrape annotations on every pod.
+metrics:
+  annotations: true

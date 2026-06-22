@@ -18,6 +18,10 @@ pooling, control-plane auth, and full observability — on top of the 0.1.0 data
 plane.
 
 ### Added
+- **Deploy to any cloud**: the page server offloads to **AWS S3 / Azure Blob /
+  GCS** via `--object-store-url` (one binary, env-resolved credentials), plus a
+  **Helm chart** (`deploy/helm/`) for EKS/AKS/GKE — server-side validated against
+  a real cluster. See `deploy/helm/README.md`.
 - **Multi-tenancy**: one page server hosts many isolated tenants. Reads route by
   `(TenantId, TimelineId)`; the line and HTTP/JSON control planes are
   tenant-aware (defaulting to the root tenant); tenants are provisioned on first

@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+apiVersion: v2
+name: aetheldb
+description: Serverless PostgreSQL — stateless compute, decoupled log-structured storage. Deploys to any cloud (S3 / Azure Blob / GCS).
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+home: https://github.com/cloudivian-org/AethelDB
+sources:
+  - https://github.com/cloudivian-org/AethelDB
+keywords:
+  - postgresql
+  - serverless
+  - database
+  - branching
+  - scale-to-zero
+maintainers:
+  - name: The AethelDB Authors
+    url: https://github.com/cloudivian-org/AethelDB

@@ -1,0 +1,87 @@
+{{- /* SPDX-License-Identifier: Apache-2.0 */ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aetheldb.safekeeperSvc" . }}
+  labels:
+    {{- include "aetheldb.labels" . | nindent 4 }}
+    app: safekeeper
+spec:
+  clusterIP: None # headless: stable per-pod DNS for quorum peers
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    aethel.component: safekeeper
+  ports:
+    - { name: wal, port: 6500, targetPort: 6500 }
+    - { name: metrics, port: 9500, targetPort: 9500 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "aetheldb.fullname" . }}-safekeeper
+  labels:
+    {{- include "aetheldb.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "aetheldb.safekeeperSvc" . }}
+  replicas: {{ .Values.safekeeper.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      aethel.component: safekeeper
+  template:
+    metadata:
+      labels:
+        {{- include "aetheldb.labels" . | nindent 8 }}
+        app: safekeeper
+        aethel.component: safekeeper
+      {{- if .Values.metrics.annotations }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9500"
+      {{- end }}
+    spec:
+      containers:
+        - name: safekeeper
+          image: {{ include "aetheldb.image" (dict "svc" "safekeeper" "root" $) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Derive node-id from the pod ordinal and build the quorum membership
+          # (and peer addresses for >1 replica) from the headless service DNS.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              ORD="${HOSTNAME##*-}"
+              START={{ .Values.safekeeper.nodeIdStart }}
+              REPLICAS={{ .Values.safekeeper.replicas }}
+              SVC="{{ include "aetheldb.safekeeperSvc" . }}"
+              NODE_ID=$((ORD + START))
+              MEMBERS=""; PEERS=""; i=0
+              while [ "$i" -lt "$REPLICAS" ]; do
+                ID=$((i + START))
+                MEMBERS="${MEMBERS:+$MEMBERS,}$ID"
+                if [ "$i" -ne "$ORD" ]; then
+                  PEERS="${PEERS:+$PEERS,}$ID=${SVC}-${i}.${SVC}:6500"
+                fi
+                i=$((i + 1))
+              done
+              exec aethel-safekeeper \
+                --listen 0.0.0.0:6500 --data-dir /data --metrics-listen 0.0.0.0:9500 \
+                --node-id "$NODE_ID" --members "$MEMBERS" ${PEERS:+--peer-addrs "$PEERS"}
+          ports:
+            - { containerPort: 6500, name: wal }
+            - { containerPort: 9500, name: metrics }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            {{- toYaml .Values.safekeeper.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.safekeeper.storageClass }}
+        storageClassName: {{ .Values.safekeeper.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.safekeeper.storage | quote }}
