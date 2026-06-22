@@ -52,6 +52,15 @@ struct Args {
     #[arg(long, env = "SP_PS_OBJECT_DIR", default_value = ".data/pageserver/objstore")]
     object_dir: PathBuf,
 
+    /// Object-store URL for layer offload — deploy to any cloud with one binary:
+    /// `s3://bucket` (AWS S3), `az://container` (Azure Blob), or `gs://bucket`
+    /// (Google Cloud Storage). Credentials come from the standard per-cloud
+    /// environment variables (`AWS_*`, `AZURE_STORAGE_*`,
+    /// `GOOGLE_APPLICATION_CREDENTIALS`). Takes precedence over the local dir;
+    /// the explicit `--s3-endpoint` flags below remain for MinIO/keyed S3.
+    #[arg(long, env = "SP_PS_OBJECT_STORE_URL")]
+    object_store_url: Option<String>,
+
     /// S3-compatible endpoint (e.g. `http://localhost:9000` for MinIO). When set,
     /// layers are offloaded to S3 instead of the local object directory.
     #[arg(long, env = "SP_PS_S3_ENDPOINT", requires = "s3_bucket")]
@@ -116,7 +125,17 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
     let args = Args::parse();
 
-    let store: Arc<dyn ObjectStore> =
+    // Object store selection (most specific first):
+    //  1. --object-store-url s3://|az://|gs://  — any cloud, env-resolved creds.
+    //  2. --s3-endpoint + --s3-bucket           — MinIO / keyed S3 (unchanged).
+    //  3. --object-dir                          — local directory (default).
+    let store: Arc<dyn ObjectStore> = if let Some(url) = &args.object_store_url {
+        info!(%url, "offloading layers to cloud object storage");
+        Arc::new(
+            pageserver::objstore::CloudObjectStore::from_url(url)
+                .with_context(|| format!("connecting to object store {url}"))?,
+        )
+    } else {
         match (&args.s3_endpoint, &args.s3_bucket) {
             (Some(endpoint), Some(bucket)) => {
                 info!(%endpoint, %bucket, "offloading layers to S3");
@@ -134,7 +153,8 @@ async fn main() -> anyhow::Result<()> {
             _ => Arc::new(LocalObjectStore::new(&args.object_dir).with_context(|| {
                 format!("opening object store at {}", args.object_dir.display())
             })?),
-        };
+        }
+    };
 
     // Select the WAL-redo backend: a real Postgres wal-redo process if one is
     // configured, else the native (FPI-only) backend. It is stateless and shared
