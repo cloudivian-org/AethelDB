@@ -10,6 +10,7 @@
 //! deployment would provide an S3 implementation behind the same trait.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
@@ -174,6 +175,142 @@ impl ObjectStore for S3ObjectStore {
             Err(object_store::Error::NotFound { .. }) => Ok(()),
             Err(e) => Err(anyhow::anyhow!("S3 delete {key}: {e}")),
         }
+    }
+}
+
+// ---- Shared backend operations (used by the cloud-agnostic store) ----
+
+async fn os_put(
+    inner: &dyn object_store::ObjectStore,
+    key: &str,
+    bytes: Vec<u8>,
+) -> anyhow::Result<()> {
+    inner
+        .put(&object_store::path::Path::from(key), bytes.into())
+        .await
+        .map_err(|e| anyhow::anyhow!("object put {key}: {e}"))?;
+    Ok(())
+}
+
+async fn os_get(inner: &dyn object_store::ObjectStore, key: &str) -> anyhow::Result<Vec<u8>> {
+    let result = inner
+        .get(&object_store::path::Path::from(key))
+        .await
+        .map_err(|e| anyhow::anyhow!("object get {key}: {e}"))?;
+    let bytes = result.bytes().await.map_err(|e| anyhow::anyhow!("object read {key}: {e}"))?;
+    Ok(bytes.to_vec())
+}
+
+async fn os_list(
+    inner: &dyn object_store::ObjectStore,
+    prefix: &str,
+) -> anyhow::Result<Vec<String>> {
+    use futures::TryStreamExt;
+    let path = object_store::path::Path::from(prefix);
+    let metas: Vec<object_store::ObjectMeta> = inner
+        .list(Some(&path))
+        .try_collect()
+        .await
+        .map_err(|e| anyhow::anyhow!("object list {prefix}: {e}"))?;
+    let mut keys: Vec<String> = metas.into_iter().map(|m| m.location.to_string()).collect();
+    keys.sort();
+    Ok(keys)
+}
+
+async fn os_delete(inner: &dyn object_store::ObjectStore, key: &str) -> anyhow::Result<()> {
+    match inner.delete(&object_store::path::Path::from(key)).await {
+        Ok(()) => Ok(()),
+        // Treat a missing object as success (idempotent).
+        Err(object_store::Error::NotFound { .. }) => Ok(()),
+        Err(e) => Err(anyhow::anyhow!("object delete {key}: {e}")),
+    }
+}
+
+/// A cloud-agnostic object store behind the [`ObjectStore`] trait, wrapping any
+/// `object_store` backend. Built from a URL so **one binary deploys to any
+/// cloud** — `s3://…` (AWS S3 / MinIO), `az://…` (Azure Blob), or `gs://…`
+/// (Google Cloud Storage). Credentials are resolved from the standard
+/// per-cloud environment variables (e.g. `AWS_*`, `AZURE_STORAGE_*`,
+/// `GOOGLE_APPLICATION_CREDENTIALS`), so deployments inject them the usual way.
+pub struct CloudObjectStore {
+    inner: Arc<dyn object_store::ObjectStore>,
+}
+
+impl CloudObjectStore {
+    /// Wrap an already-constructed `object_store` backend (used in tests against
+    /// emulators).
+    pub fn from_inner(inner: Arc<dyn object_store::ObjectStore>) -> Self {
+        CloudObjectStore { inner }
+    }
+
+    /// Build a store from a URL, resolving credentials from the environment.
+    ///
+    /// Supported schemes: `s3` (AWS S3 / S3-compatible), `az`/`azure`/`abfs[s]`
+    /// (Azure Blob), `gs` (Google Cloud Storage). Set
+    /// `SP_PS_OBJECT_STORE_ALLOW_HTTP=1` to permit plaintext HTTP endpoints (for
+    /// local emulators such as Azurite).
+    pub fn from_url(url: &str) -> anyhow::Result<Self> {
+        use object_store::aws::AmazonS3Builder;
+        use object_store::azure::MicrosoftAzureBuilder;
+        use object_store::gcp::GoogleCloudStorageBuilder;
+
+        let allow_http = std::env::var("SP_PS_OBJECT_STORE_ALLOW_HTTP")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let scheme = url.split_once("://").map(|(s, _)| s).unwrap_or("").to_ascii_lowercase();
+
+        let inner: Arc<dyn object_store::ObjectStore> = match scheme.as_str() {
+            "s3" => Arc::new(
+                AmazonS3Builder::from_env()
+                    .with_url(url)
+                    .with_allow_http(allow_http)
+                    .build()
+                    .map_err(|e| anyhow::anyhow!("building S3 store from {url}: {e}"))?,
+            ),
+            "az" | "azure" | "abfs" | "abfss" => {
+                let mut builder =
+                    MicrosoftAzureBuilder::from_env().with_url(url).with_allow_http(allow_http);
+                // Target the Azurite emulator when requested (local testing).
+                if std::env::var("AZURE_STORAGE_USE_EMULATOR")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false)
+                {
+                    builder = builder.with_use_emulator(true);
+                }
+                Arc::new(
+                    builder
+                        .build()
+                        .map_err(|e| anyhow::anyhow!("building Azure store from {url}: {e}"))?,
+                )
+            }
+            "gs" => Arc::new(
+                GoogleCloudStorageBuilder::from_env()
+                    .with_url(url)
+                    .build()
+                    .map_err(|e| anyhow::anyhow!("building GCS store from {url}: {e}"))?,
+            ),
+            other => anyhow::bail!(
+                "unsupported object-store URL scheme {other:?} in {url:?} \
+                 (use s3://, az://, or gs://)"
+            ),
+        };
+        Ok(CloudObjectStore { inner })
+    }
+}
+
+#[async_trait]
+impl ObjectStore for CloudObjectStore {
+    async fn put(&self, key: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
+        os_put(self.inner.as_ref(), key, bytes).await
+    }
+    async fn get(&self, key: &str) -> anyhow::Result<Vec<u8>> {
+        os_get(self.inner.as_ref(), key).await
+    }
+    async fn list(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
+        os_list(self.inner.as_ref(), prefix).await
+    }
+    async fn delete(&self, key: &str) -> anyhow::Result<()> {
+        os_delete(self.inner.as_ref(), key).await
     }
 }
 

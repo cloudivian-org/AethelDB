@@ -42,7 +42,7 @@ pub mod walredo_proto;
 pub use control::serve_control;
 pub use httpapi::serve_http_api;
 pub use layer::{Layer, LayerId};
-pub use objstore::{LocalObjectStore, ObjectStore, S3ObjectStore};
+pub use objstore::{CloudObjectStore, LocalObjectStore, ObjectStore, S3ObjectStore};
 pub use page::{ByteEdit, Modification, PageVersion, WalRecord};
 pub use repository::{PageLookup, Repository};
 pub use server::{serve_ingest, serve_pages};
