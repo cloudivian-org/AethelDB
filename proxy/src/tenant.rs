@@ -9,7 +9,6 @@
 //! activity — the three facts the wake path and the idle reaper need.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -17,8 +16,9 @@ use std::time::{Duration, Instant};
 /// Mutable lifecycle state for a single tenant's compute node.
 #[derive(Debug)]
 pub struct TenantState {
-    /// Where this tenant's compute server listens once awake.
-    backend: SocketAddr,
+    /// Where this tenant's compute server listens once awake — a `host:port`
+    /// string, so a DNS name (e.g. a Kubernetes Service) is resolved at connect.
+    backend: String,
     /// Whether the proxy currently believes compute is up. This is a hint that
     /// lets the hot path skip the activator; the health check is authoritative.
     running: AtomicBool,
@@ -32,10 +32,10 @@ pub struct TenantState {
 }
 
 impl TenantState {
-    /// Create state for a tenant whose backend lives at `backend`.
-    pub fn new(backend: SocketAddr, running: bool) -> Self {
+    /// Create state for a tenant whose backend lives at `backend` (`host:port`).
+    pub fn new(backend: impl Into<String>, running: bool) -> Self {
         TenantState {
-            backend,
+            backend: backend.into(),
             running: AtomicBool::new(running),
             active_conns: AtomicU64::new(0),
             last_active: Mutex::new(Instant::now()),
@@ -45,7 +45,7 @@ impl TenantState {
 
     /// Like [`new`](Self::new), but with a SCRAM verifier for proxy-side auth.
     pub fn with_scram(
-        backend: SocketAddr,
+        backend: impl Into<String>,
         running: bool,
         scram: crate::scram::ScramSecret,
     ) -> Self {
@@ -57,9 +57,9 @@ impl TenantState {
         self.scram.as_ref()
     }
 
-    /// Backend socket address.
-    pub fn backend(&self) -> SocketAddr {
-        self.backend
+    /// Backend address (`host:port`); resolved at connect time.
+    pub fn backend(&self) -> &str {
+        &self.backend
     }
 
     /// Whether compute is believed to be running.
@@ -164,8 +164,8 @@ impl Registry {
 mod tests {
     use super::*;
 
-    fn addr() -> SocketAddr {
-        "127.0.0.1:5432".parse().unwrap()
+    fn addr() -> &'static str {
+        "127.0.0.1:5432"
     }
 
     #[test]

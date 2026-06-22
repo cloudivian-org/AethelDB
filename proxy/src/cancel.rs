@@ -20,7 +20,6 @@
 //!   to the client untouched.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Mutex;
 
 /// A backend cancellation key: `(process_id, secret_key)`.
@@ -29,7 +28,7 @@ pub type CancelKey = (i32, i32);
 /// Maps live sessions' cancellation keys to the backend that owns them.
 #[derive(Default)]
 pub struct CancelRegistry {
-    map: Mutex<HashMap<CancelKey, SocketAddr>>,
+    map: Mutex<HashMap<CancelKey, String>>,
 }
 
 impl CancelRegistry {
@@ -38,9 +37,9 @@ impl CancelRegistry {
         Self::default()
     }
 
-    /// Register a session's key against the backend that issued it.
-    pub fn insert(&self, key: CancelKey, backend: SocketAddr) {
-        self.map.lock().unwrap().insert(key, backend);
+    /// Register a session's key against the backend (`host:port`) that issued it.
+    pub fn insert(&self, key: CancelKey, backend: impl Into<String>) {
+        self.map.lock().unwrap().insert(key, backend.into());
     }
 
     /// Forget a session's key (called when the splice ends).
@@ -49,8 +48,8 @@ impl CancelRegistry {
     }
 
     /// Resolve a cancellation key to its backend, if still live.
-    pub fn lookup(&self, key: CancelKey) -> Option<SocketAddr> {
-        self.map.lock().unwrap().get(&key).copied()
+    pub fn lookup(&self, key: CancelKey) -> Option<String> {
+        self.map.lock().unwrap().get(&key).cloned()
     }
 
     /// Number of currently-tracked sessions (used in tests).
@@ -207,10 +206,9 @@ mod tests {
     #[test]
     fn registry_insert_lookup_remove() {
         let reg = CancelRegistry::new();
-        let addr: SocketAddr = "127.0.0.1:6543".parse().unwrap();
         assert!(reg.is_empty());
-        reg.insert((10, 20), addr);
-        assert_eq!(reg.lookup((10, 20)), Some(addr));
+        reg.insert((10, 20), "127.0.0.1:6543");
+        assert_eq!(reg.lookup((10, 20)).as_deref(), Some("127.0.0.1:6543"));
         assert_eq!(reg.lookup((10, 21)), None);
         assert_eq!(reg.len(), 1);
         reg.remove((10, 20));

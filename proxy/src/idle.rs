@@ -71,7 +71,7 @@ mod tests {
 
     #[tokio::test]
     async fn reaper_stops_idle_running_tenants() {
-        let backend = "127.0.0.1:5432".parse().unwrap();
+        let backend = "127.0.0.1:5432";
         let registry = Registry::from_iter([
             ("idle".to_string(), TenantState::new(backend, true)),
             ("busy".to_string(), TenantState::new(backend, true)),
