@@ -103,7 +103,7 @@
         <button class="btn" onclick="refreshAll()">↻ Refresh</button></div>
       <div class="grid cards">
         <div class="card"><h3>Cluster</h3><div class="stat" id="ovHealth">—</div><div class="muted mono" id="ovServer"></div></div>
-        <div class="card"><h3>Databases</h3><div class="stat" id="ovDbs">—</div></div>
+        <div class="card"><h3>Databases</h3><div class="stat" id="ovDbs">—</div><div class="muted" id="ovRunning"></div></div>
         <div class="card"><h3>Compute</h3><div class="stat">Auto<small> · scale-to-zero</small></div><div class="muted">no capacity to configure</div></div>
         <div class="card"><h3>Recovery</h3><div class="stat">PITR<small> · built-in</small></div><div class="muted">branch any point in time</div></div>
       </div>
@@ -204,6 +204,7 @@ async function refreshAll() {
     $("#connPill").className = "pill ok"; $("#connText").textContent = "connected";
     $("#ovHealth").textContent = "Healthy"; $("#ovServer").textContent = s.server || "";
     $("#ovDbs").textContent = s.databases ?? 0;
+    $("#ovRunning").textContent = s.computeControl ? `${s.running ?? 0} running · scale-to-zero` : "scale-to-zero";
     $("#applyBtn").style.display = s.allowApply ? "inline-block" : "none";
     $("#dpHint").innerHTML = s.allowApply
       ? 'Preview renders with <code>helm --dry-run</code>; <b>Deploy</b> applies it to your kube-context.'
@@ -218,13 +219,25 @@ async function refreshAll() {
 // Databases
 async function loadDatabases() {
   let data; try { data = await api("GET", "/api/databases"); } catch (e) { toast(e.message, "err"); return; }
-  const dbs = data.databases || [];
+  const dbs = data.databases || [], ctl = data.computeControl;
   if (!dbs.length) { $("#dbList").innerHTML = `<div class="card"><div class="empty">No databases yet — create one above to get a connection string.</div></div>`; return; }
-  $("#dbList").innerHTML = dbs.map(d => `
-    <div class="dbcard">
-      <div class="dbhead"><b>${d.name}</b><span class="badge ${d.status}">${d.status === 'active' ? '● active' : '○ pending'}</span></div>
+  $("#dbList").innerHTML = dbs.map(d => {
+    const c = d.compute;
+    const pill = c === 'running' ? '<span class="badge active">● running</span>'
+      : c === 'hibernated' ? '<span class="badge pending">☾ hibernated</span>'
+      : '<span class="badge" style="background:var(--bg);color:var(--muted)">— no compute route</span>';
+    let btn = '';
+    if (ctl && c === 'running') btn = `<button class="btn sm" onclick="dbAction('${d.name}','stop')">Hibernate</button>`;
+    else if (ctl && c === 'hibernated') btn = `<button class="btn sm" onclick="dbAction('${d.name}','start')">Start</button>`;
+    return `<div class="dbcard">
+      <div class="dbhead"><b>${d.name}</b>${pill}<span style="flex:1"></span>${btn}</div>
       <div class="connrow"><code>${d.connection}</code><button class="btn sm" onclick="copyText('${d.connection}')">Copy</button></div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
+}
+async function dbAction(name, action) {
+  try { await api("POST", `/api/databases/${name}/${action}`); toast(`${name}: ${action === 'start' ? 'starting' : 'hibernating'}`, "ok"); setTimeout(()=>{loadDatabases(); refreshAll();}, 400); }
+  catch (e) { toast(e.message, "err"); }
 }
 async function createDatabase() {
   const name = $("#dbName").value.trim(); if (!name) return;

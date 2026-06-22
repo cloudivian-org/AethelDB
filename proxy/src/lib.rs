@@ -14,6 +14,7 @@
 
 pub mod activator;
 pub mod cancel;
+pub mod control;
 pub mod idle;
 #[cfg(feature = "kubernetes")]
 pub mod k8s;
