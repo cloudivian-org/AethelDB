@@ -180,8 +180,17 @@ aethelctl pitr <new-hex> --from <parent-hex> --lsn 5000 --tenant <hex>   # branc
 aethelctl gc 4000 --tenant <hex> --json
 ```
 
-Every command takes `--json` for scripting. See [`ROADMAP.md`](ROADMAP.md) for the
-`aethelctl deploy --cloud …` work.
+It also **deploys** AethelDB — the Helm chart is embedded in the binary, so this
+works from anywhere:
+
+```bash
+aethelctl up                                   # local stack (Docker Compose)
+aethelctl deploy --cloud aws \                 # → any managed K8s (EKS/AKS/GKE)
+  --object-store-url s3://my-bucket \
+  --image-repo ghcr.io/you/aetheldb --image-tag v0.2.0
+```
+
+Every control-plane command takes `--json` for scripting.
 
 ### Metrics
 

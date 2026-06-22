@@ -9,8 +9,9 @@
 //! control token via `--token` / `AETHEL_TOKEN`.
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
+use aethelctl::deploy::{self, DeployOpts};
 use aethelctl::{Client, DEFAULT_SERVER};
 
 #[derive(Parser)]
@@ -72,6 +73,75 @@ enum Command {
         #[arg(long)]
         tenant: Option<String>,
     },
+
+    /// Bring up the local stack with Docker Compose.
+    Up {
+        /// Compose file to use.
+        #[arg(long, default_value = "docker-compose.yml")]
+        file: String,
+        /// Run in the foreground (default is detached).
+        #[arg(long)]
+        foreground: bool,
+    },
+    /// Tear down the local Docker Compose stack.
+    Down {
+        #[arg(long, default_value = "docker-compose.yml")]
+        file: String,
+    },
+
+    /// Deploy AethelDB to a Kubernetes cluster via the embedded Helm chart.
+    Deploy {
+        /// Helm release name.
+        #[arg(long, default_value = "aethel")]
+        release: String,
+        #[arg(long, default_value = "aethel")]
+        namespace: String,
+        /// Cloud preset (currently exposes the proxy via a LoadBalancer).
+        #[arg(long, value_enum)]
+        cloud: Option<Cloud>,
+        /// Object-store URL (s3:// | az:// | gs://).
+        #[arg(long)]
+        object_store_url: Option<String>,
+        /// Container image repository (org), e.g. ghcr.io/you/aetheldb.
+        #[arg(long)]
+        image_repo: Option<String>,
+        /// Container image tag, e.g. v0.2.0.
+        #[arg(long)]
+        image_tag: Option<String>,
+        /// Expose the proxy with a cloud LoadBalancer.
+        #[arg(long)]
+        expose: bool,
+        /// Extra `-f values.yaml` files.
+        #[arg(long = "values", value_name = "FILE")]
+        values: Vec<String>,
+        /// Extra `--set key=value` overrides.
+        #[arg(long = "set", value_name = "KEY=VALUE")]
+        set: Vec<String>,
+        /// Use a chart directory instead of the embedded chart.
+        #[arg(long)]
+        chart: Option<String>,
+        /// Wait for resources to become ready.
+        #[arg(long)]
+        wait: bool,
+        /// Render and validate without applying.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Uninstall an AethelDB Helm release.
+    Uninstall {
+        #[arg(long, default_value = "aethel")]
+        release: String,
+        #[arg(long, default_value = "aethel")]
+        namespace: String,
+    },
+}
+
+/// Cloud presets for `deploy`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Cloud {
+    Aws,
+    Azure,
+    Gcp,
 }
 
 #[derive(Subcommand)]
@@ -171,6 +241,46 @@ fn main() -> Result<()> {
                     "gc @ {horizon_lsn}: {tls} timelines, {removed} versions removed, {objs} objects deleted"
                 );
             }
+        }
+
+        Command::Up { file, foreground } => {
+            deploy::compose("up", &file, !foreground)?;
+        }
+        Command::Down { file } => {
+            deploy::compose("down", &file, false)?;
+        }
+
+        Command::Deploy {
+            release,
+            namespace,
+            cloud,
+            object_store_url,
+            image_repo,
+            image_tag,
+            expose,
+            values,
+            set,
+            chart,
+            wait,
+            dry_run,
+        } => {
+            let opts = DeployOpts {
+                release,
+                namespace,
+                values_files: values,
+                sets: set,
+                object_store_url,
+                image_repo,
+                image_tag,
+                // Any cloud preset exposes the proxy externally.
+                expose: expose || cloud.is_some(),
+                wait,
+                dry_run,
+            };
+            deploy::deploy(&opts, chart.as_deref())?;
+        }
+        Command::Uninstall { release, namespace } => {
+            deploy::uninstall(&release, &namespace)?;
         }
     }
     Ok(())
