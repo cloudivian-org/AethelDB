@@ -15,12 +15,28 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// A named recovery branch (point-in-time restore point) of a database.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RestorePoint {
+    pub name: String,
+    /// The branch's timeline id (32 hex chars).
+    pub timeline: String,
+    /// The LSN this restore point branches from.
+    pub lsn: u64,
+}
+
 /// A provisioned database (a named tenant).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Database {
     pub name: String,
     /// The tenant id (32 hex chars) derived from the name.
     pub id: String,
+    /// Named point-in-time restore points (branches).
+    #[serde(default)]
+    pub branches: Vec<RestorePoint>,
+    /// The timeline the database currently serves from (`None` = the live root).
+    #[serde(default)]
+    pub current: Option<String>,
 }
 
 /// Derive a stable 32-hex tenant id from a database name (first 16 bytes of its
@@ -80,13 +96,41 @@ pub fn remove(name: &str) -> Result<Option<Database>> {
 pub fn upsert(name: &str) -> Result<Database> {
     let name = name.trim().to_string();
     anyhow::ensure!(!name.is_empty(), "database name must not be empty");
-    let db = Database { id: id_from_name(&name), name: name.clone() };
     let mut dbs = load();
-    if !dbs.iter().any(|d| d.name == name) {
-        dbs.push(db.clone());
+    if let Some(existing) = dbs.iter().find(|d| d.name == name) {
+        return Ok(existing.clone());
+    }
+    let db =
+        Database { id: id_from_name(&name), name: name.clone(), branches: vec![], current: None };
+    dbs.push(db.clone());
+    save(&dbs)?;
+    Ok(db)
+}
+
+/// Record a recovery branch (restore point) for a database. Idempotent by name.
+pub fn add_branch(db: &str, branch: &str, timeline: &str, lsn: u64) -> Result<()> {
+    let mut dbs = load();
+    if let Some(d) = dbs.iter_mut().find(|d| d.name == db) {
+        if !d.branches.iter().any(|b| b.name == branch) {
+            d.branches.push(RestorePoint {
+                name: branch.to_string(),
+                timeline: timeline.to_string(),
+                lsn,
+            });
+            save(&dbs)?;
+        }
+    }
+    Ok(())
+}
+
+/// Set the timeline a database currently serves from (`None` = live root).
+pub fn set_current(db: &str, timeline: Option<String>) -> Result<()> {
+    let mut dbs = load();
+    if let Some(d) = dbs.iter_mut().find(|d| d.name == db) {
+        d.current = timeline;
         save(&dbs)?;
     }
-    Ok(db)
+    Ok(())
 }
 
 #[cfg(test)]

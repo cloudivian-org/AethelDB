@@ -93,6 +93,9 @@ fn route(
             if let Some(name) = rest.strip_suffix("/branch") {
                 return api(branch_database(client, cfg, name, body));
             }
+            if let Some(name) = rest.strip_suffix("/restore") {
+                return api(restore_database(name, body));
+            }
         }
     }
     // Dynamic: DELETE /api/databases/<name> (deprovision).
@@ -234,7 +237,20 @@ fn branch_database(client: &Client, _cfg: &ServeCfg, name: &str, body: &str) -> 
     let lsn = b.get("lsn").and_then(|v| v.as_u64()).unwrap_or(0);
     let timeline = databases::id_from_name(&format!("{name}/{branch}"));
     ignore_conflict(client.branch(&timeline, ROOT_TIMELINE, lsn, Some(&db.id)))?;
+    databases::add_branch(name, &branch, &timeline, lsn)?;
     Ok(json!({ "database": name, "branch": branch, "timeline": timeline, "lsn": lsn }))
+}
+
+/// Restore a database to a restore point (or back to live). Sets the timeline the
+/// database serves from; the activator pins compute to it on next start.
+fn restore_database(name: &str, body: &str) -> Result<Value> {
+    let timeline = parse(body)
+        .get("timeline")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && *s != "live")
+        .map(str::to_owned);
+    databases::set_current(name, timeline.clone())?;
+    Ok(json!({ "database": name, "current": timeline }))
 }
 
 /// Register (`add = true`) or deregister a tenant route on the proxy. Best-effort
@@ -261,12 +277,24 @@ fn list_databases(client: &Client, cfg: &ServeCfg) -> Result<Value> {
                 Some(false) => "hibernated",
                 None => "unmanaged",
             };
+            // Friendly name of the timeline the database currently serves from.
+            let current = match &d.current {
+                None => "live".to_string(),
+                Some(tl) => d
+                    .branches
+                    .iter()
+                    .find(|b| &b.timeline == tl)
+                    .map(|b| b.name.clone())
+                    .unwrap_or_else(|| "restore".to_string()),
+            };
             json!({
                 "name": d.name,
                 "id": d.id,
                 "connection": databases::connection_string(&d.name, &cfg.client_endpoint),
                 "status": status,
                 "compute": compute,
+                "current": current,
+                "branches": d.branches,
             })
         })
         .collect();
