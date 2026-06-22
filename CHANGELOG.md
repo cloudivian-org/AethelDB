@@ -33,8 +33,9 @@ plane.
   Databases view deletes a database — removing its tenant, proxy route, and local
   record.
 - **Point-in-time recovery per database**: the Databases view re-surfaces
-  branching as a friendly **"Branch / restore point"** — name it, pick an LSN, and
-  get an instant copy-on-write snapshot that shares history up to that point.
+  branching as friendly **named restore points** — create one at an LSN (instant
+  copy-on-write), see the list per database, **restore in-place** to any point,
+  and **restore to live**. The console shows which point a database is serving.
 - **Compute lifecycle (start / hibernate)**: the proxy exposes an optional
   compute-control HTTP API (`--control-listen`) for per-tenant running state and
   start/stop, over the same activator the idle reaper uses. The console's

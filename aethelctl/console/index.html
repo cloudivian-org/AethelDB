@@ -229,8 +229,17 @@ async function loadDatabases() {
     let life = '';
     if (ctl && c === 'running') life = `<button class="btn sm" onclick="dbAction('${n}','stop')">Hibernate</button>`;
     else if (ctl && c === 'hibernated') life = `<button class="btn sm" onclick="dbAction('${n}','start')">Start</button>`;
+    const serving = (d.current && d.current !== 'live')
+      ? `<span class="badge" style="background:rgba(217,119,6,.14);color:var(--amber)">⟲ restored: ${d.current}</span>` : '';
+    const rps = (d.branches || []);
+    const rpList = rps.length ? `
+      <div style="margin-top:12px"><div class="note" style="font-weight:700;margin-bottom:4px">Restore points</div>
+      ${rps.map(b => `<div class="connrow" style="margin-top:6px"><code>${b.name} · LSN ${b.lsn}</code>
+        <button class="btn sm" onclick="restoreDb('${n}','${b.timeline}')">Restore</button></div>`).join('')}
+      ${(d.current && d.current !== 'live') ? `<div style="margin-top:6px"><button class="btn sm" onclick="restoreDb('${n}','live')">↩ Restore to live</button></div>` : ''}
+      </div>` : '';
     return `<div class="dbcard">
-      <div class="dbhead"><b>${n}</b>${pill}<span style="flex:1"></span>${life}</div>
+      <div class="dbhead"><b>${n}</b>${pill}${serving}<span style="flex:1"></span>${life}</div>
       <div class="connrow"><code>${d.connection}</code><button class="btn sm" onclick="copyText('${d.connection}')">Copy</button></div>
       <div class="row" style="margin-top:10px">
         <button class="btn sm" onclick="toggleBranch('${n}')">⎇ Branch / restore point</button>
@@ -239,10 +248,11 @@ async function loadDatabases() {
       <div class="hidden" id="bf-${n}" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line)">
         <p class="note" style="margin:0 0 8px">A point-in-time copy: it shares history up to the restore point and diverges after — instant, copy-on-write.</p>
         <div class="row">
-          <div class="field"><label>Branch name</label><input id="bn-${n}" placeholder="before-migration" /></div>
-          <div class="field" style="max-width:200px"><label>Restore point (LSN · 0 = latest)</label><input id="bl-${n}" type="number" value="0" /></div>
-          <button class="btn primary sm" onclick="createBranch('${n}')">Create branch</button>
+          <div class="field"><label>Restore-point name</label><input id="bn-${n}" placeholder="before-migration" /></div>
+          <div class="field" style="max-width:200px"><label>At LSN · 0 = latest</label><input id="bl-${n}" type="number" value="0" /></div>
+          <button class="btn primary sm" onclick="createBranch('${n}')">Create restore point</button>
         </div>
+        ${rpList}
       </div>
     </div>`;
   }).join("");
@@ -251,7 +261,13 @@ function toggleBranch(name) { $("#bf-"+name).classList.toggle("hidden"); }
 async function createBranch(name) {
   const branch = ($("#bn-"+name).value || "restore").trim();
   const lsn = Number($("#bl-"+name).value || 0);
-  try { await api("POST", `/api/databases/${name}/branch`, { branch, lsn }); toast(`Created branch "${branch}" of ${name} @ LSN ${lsn}`, "ok"); toggleBranch(name); }
+  try { await api("POST", `/api/databases/${name}/branch`, { branch, lsn }); toast(`Created restore point "${branch}" of ${name} @ LSN ${lsn}`, "ok"); loadDatabases(); }
+  catch (e) { toast(e.message, "err"); }
+}
+async function restoreDb(name, timeline) {
+  const what = timeline === 'live' ? 'live (latest)' : 'the selected restore point';
+  if (!confirm(`Restore "${name}" to ${what}? Its compute will serve from this point.`)) return;
+  try { await api("POST", `/api/databases/${name}/restore`, { timeline }); toast(`${name} restored to ${timeline === 'live' ? 'live' : 'restore point'}`, "ok"); loadDatabases(); }
   catch (e) { toast(e.message, "err"); }
 }
 async function deleteDatabase(name) {
