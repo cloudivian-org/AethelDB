@@ -12,6 +12,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **SQL-level metrics (Performance-Insights tier)**: the per-database Metrics view
+  gains a **SQL · Postgres** section — transactions/sec, cache-hit ratio, active
+  backends, and rows/sec — read from a `postgres_exporter` scraped per compute
+  (labelled `database=<name>`). Until an exporter is wired the console shows a
+  friendly hint; nothing breaks. Wiring is documented in
+  `deploy/monitoring/postgres-exporter.md`. Verified end-to-end against a real
+  Postgres 16 + `postgres_exporter` (tps, cache-hit %, backends, rows/sec all
+  populated).
 - **Opt-in keep-warm (zero cold start for chosen databases)**: mark a
   latency-sensitive database **keep-warm** and it is exempt from scale-to-zero —
   the idle reaper skips it and a background warmer keeps its compute started, so

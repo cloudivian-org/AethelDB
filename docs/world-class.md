@@ -56,6 +56,11 @@ produces** — which Aurora structurally cannot show.
   plus `pg_stat_statements` for a Performance-Insights-style "top queries / load
   by wait event" view. Real, but needs running compute + the exporter — a deploy
   wiring, not an engine change.
+- **Shipped**: the console's per-database **SQL · Postgres** section
+  (transactions/sec, cache-hit ratio, active backends, rows/sec) from
+  `postgres_exporter`, verified against a real Postgres 16. Top-queries via
+  `pg_stat_statements` is the next increment. See
+  `deploy/monitoring/postgres-exporter.md`.
 
 ### Where we win (signals Aurora can't show)
 - **Scale-to-zero economics** — active **compute-seconds** per database, idle vs

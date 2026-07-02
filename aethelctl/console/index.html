@@ -317,6 +317,23 @@ async function openMetrics(name) {
       ['Compute uptime', uptime.toFixed(0) + '%'],
       ['Saved by scale-to-zero', (100 - uptime).toFixed(0) + '%'],
     ];
+    const q = r.sql || {};
+    const hasSql = ['tps', 'cacheHit', 'backends', 'rows'].some(k => (q[k] || []).length);
+    const sqlBlock = hasSql ? `
+      <h3 style="margin:22px 0 8px;color:var(--muted);font-size:13px;text-transform:uppercase;letter-spacing:.6px">SQL · Postgres (Performance Insights)</h3>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+        <div class="card" style="padding:14px"><div class="muted" style="font-size:12px">Transactions / sec</div><div class="stat">${fnum(lastv(q.tps))}</div></div>
+        <div class="card" style="padding:14px"><div class="muted" style="font-size:12px">Cache hit ratio</div><div class="stat">${fnum(lastv(q.cacheHit))}%</div></div>
+        <div class="card" style="padding:14px"><div class="muted" style="font-size:12px">Active backends</div><div class="stat">${fnum(lastv(q.backends))}</div></div>
+        <div class="card" style="padding:14px"><div class="muted" style="font-size:12px">Rows read / sec</div><div class="stat">${fnum(lastv(q.rows))}</div></div>
+      </div>
+      <div style="display:grid;gap:14px;margin-top:14px">
+        ${chartCard('Transactions / sec', q.tps, 'var(--accent)', '/s')}
+        ${chartCard('Cache hit ratio (%)', q.cacheHit, 'var(--teal)', '%')}
+        ${chartCard('Active backends', q.backends, 'var(--accent2)', '')}
+        ${chartCard('Rows read / sec', q.rows, 'var(--amber)', '/s')}
+      </div>` : `
+      <div class="card" style="margin-top:16px"><h3>SQL · Postgres</h3><div class="empty">No SQL metrics yet — attach a <code>postgres_exporter</code> to this database's compute, labelled <code>database=${name}</code>.<br><span class="muted">See <code>deploy/monitoring/postgres-exporter.md</code>.</span></div></div>`;
     d.innerHTML = `<div class="card">
       ${head}
       <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:14px">
@@ -329,6 +346,7 @@ async function openMetrics(name) {
         ${chartCard('Cold starts / sec', s.wakes, 'var(--accent2)', '/s')}
       </div>
       <p class="note" style="margin-top:12px"><b>Uptime</b> &amp; <b>saved by scale-to-zero</b> come from compute that hibernates when idle — signals an always-on database (Aurora, RDS) can't show.</p>
+      ${sqlBlock}
     </div>`;
   } catch (e) {
     d.innerHTML = `<div class="card">${head}<div class="empty">${e.message}<br><span class="muted">Start the console with <code>--prometheus-url &lt;url&gt;</code> to enable per-database charts.</span></div></div>`;
