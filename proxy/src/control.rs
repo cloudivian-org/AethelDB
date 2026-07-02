@@ -111,6 +111,11 @@ async fn route(proxy: &Arc<Proxy>, tmpl: &str, method: &str, path: &str) -> (u16
         ("POST", Some("tenants"), Some(name), Some("unpin"), None) => {
             set_pin(proxy, name, None).await
         }
+        ("POST", Some("tenants"), Some(name), Some(action), None)
+            if action == "keepwarm" || action == "nokeepwarm" =>
+        {
+            set_keep_warm(proxy, name, action == "keepwarm").await
+        }
         _ => (404, r#"{"error":"not found"}"#.to_string()),
     }
 }
@@ -122,10 +127,11 @@ fn list_tenants(proxy: &Arc<Proxy>) -> String {
         .into_iter()
         .map(|(name, state)| {
             format!(
-                r#"{{"tenant":{},"running":{},"connections":{}}}"#,
+                r#"{{"tenant":{},"running":{},"connections":{},"keepWarm":{}}}"#,
                 json_str(&name),
                 state.is_running(),
-                state.active_conns()
+                state.active_conns(),
+                state.keep_warm()
             )
         })
         .collect();
@@ -203,6 +209,30 @@ async fn set_pin(proxy: &Arc<Proxy>, name: &str, timeline: Option<&str>) -> (u16
         None => "null".to_string(),
     };
     (200, format!(r#"{{"tenant":{},"pinned":{}}}"#, json_str(name), pinned))
+}
+
+/// Mark a tenant keep-warm (exempt from scale-to-zero) or clear it. Turning it on
+/// starts compute immediately so it's hot right away; the background warmer keeps
+/// it running thereafter. Turning it off lets the idle reaper scale it to zero as
+/// usual. Off by default, so untouched tenants are unaffected.
+async fn set_keep_warm(proxy: &Arc<Proxy>, name: &str, on: bool) -> (u16, String) {
+    let Some(state) = proxy.registry().get(name) else {
+        return (404, format!(r#"{{"error":"unknown tenant {name}"}}"#));
+    };
+    state.set_keep_warm(on);
+    if on && !state.is_running() {
+        let pin = state.pinned_timeline();
+        match proxy.activator().start(name, pin.as_deref()).await {
+            Ok(()) => {
+                state.set_running(true);
+                state.touch();
+                crate::metrics::set_compute_up(name, true);
+            }
+            Err(e) => return (502, format!(r#"{{"error":{}}}"#, json_str(&format!("{e:#}")))),
+        }
+    }
+    debug!(tenant = name, keep_warm = on, "keep-warm changed via control API");
+    (200, format!(r#"{{"tenant":{},"keepWarm":{}}}"#, json_str(name), on))
 }
 
 /// Minimal JSON string escaping (quotes + backslashes).

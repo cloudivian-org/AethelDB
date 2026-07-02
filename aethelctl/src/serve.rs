@@ -98,6 +98,12 @@ fn route(
             if let Some(name) = rest.strip_suffix("/restore") {
                 return api(restore_database(cfg, name, body));
             }
+            if let Some(name) = rest.strip_suffix("/keepwarm") {
+                return api(database_warm(cfg, name, true));
+            }
+            if let Some(name) = rest.strip_suffix("/nokeepwarm") {
+                return api(database_warm(cfg, name, false));
+            }
         }
     }
     // Dynamic: GET /api/databases/<name>/metrics (per-database charts).
@@ -248,6 +254,29 @@ fn compute_states(cfg: &ServeCfg) -> std::collections::HashMap<String, bool> {
     map
 }
 
+/// Per-tenant **keep-warm** state from the proxy (empty if no proxy/unreachable).
+fn keep_warm_states(cfg: &ServeCfg) -> std::collections::HashMap<String, bool> {
+    let mut map = std::collections::HashMap::new();
+    if let Some(base) = &cfg.proxy_url {
+        let url = format!("{}/tenants", base.trim_end_matches('/'));
+        if let Ok(resp) = ureq::get(&url).call() {
+            if let Ok(v) = resp.into_json::<Value>() {
+                if let Some(arr) = v.get("tenants").and_then(|t| t.as_array()) {
+                    for t in arr {
+                        if let (Some(name), Some(kw)) = (
+                            t.get("tenant").and_then(|n| n.as_str()),
+                            t.get("keepWarm").and_then(|r| r.as_bool()),
+                        ) {
+                            map.insert(name.to_string(), kw);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
 /// Start (`start=true`) or hibernate a database's compute via the proxy.
 fn database_action(cfg: &ServeCfg, name: &str, start: bool) -> Result<Value> {
     let base = cfg.proxy_url.as_ref().ok_or_else(|| {
@@ -257,6 +286,17 @@ fn database_action(cfg: &ServeCfg, name: &str, start: bool) -> Result<Value> {
     let url = format!("{}/tenants/{}/{}", base.trim_end_matches('/'), name, action);
     ureq::post(&url).call().map_err(|e| anyhow!("compute {action} for {name} failed: {e}"))?;
     Ok(json!({ "name": name, "running": start }))
+}
+
+/// Mark a database keep-warm (never scale to zero → zero cold start) or clear it.
+fn database_warm(cfg: &ServeCfg, name: &str, on: bool) -> Result<Value> {
+    let base = cfg.proxy_url.as_ref().ok_or_else(|| {
+        anyhow!("compute control is not configured; start `aethelctl serve` with --proxy-url")
+    })?;
+    let action = if on { "keepwarm" } else { "nokeepwarm" };
+    let url = format!("{}/tenants/{}/{}", base.trim_end_matches('/'), name, action);
+    ureq::post(&url).call().map_err(|e| anyhow!("keep-warm {action} for {name} failed: {e}"))?;
+    Ok(json!({ "name": name, "keepWarm": on }))
 }
 
 const ROOT_TIMELINE: &str = "00000000000000000000000000000000";
@@ -356,6 +396,7 @@ fn proxy_route(cfg: &ServeCfg, name: &str, add: bool) {
 fn list_databases(client: &Client, cfg: &ServeCfg) -> Result<Value> {
     let live = client.list_tenants().unwrap_or_default();
     let compute = compute_states(cfg);
+    let warm = keep_warm_states(cfg);
     let dbs: Vec<Value> = databases::load()
         .into_iter()
         .map(|d| {
@@ -365,6 +406,7 @@ fn list_databases(client: &Client, cfg: &ServeCfg) -> Result<Value> {
                 Some(false) => "hibernated",
                 None => "unmanaged",
             };
+            let keep_warm = warm.get(&d.name).copied().unwrap_or(false);
             // Friendly name of the timeline the database currently serves from.
             let current = match &d.current {
                 None => "live".to_string(),
@@ -381,6 +423,7 @@ fn list_databases(client: &Client, cfg: &ServeCfg) -> Result<Value> {
                 "connection": databases::connection_string(&d.name, &cfg.client_endpoint),
                 "status": status,
                 "compute": compute,
+                "keepWarm": keep_warm,
                 "current": current,
                 "branches": d.branches,
             })
