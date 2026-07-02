@@ -190,6 +190,13 @@ fn database_metrics(cfg: &ServeCfg, name: &str) -> Result<Value> {
         };
         prom_range(prom, &expr, start, end)
     };
+    // SQL-level series from a postgres_exporter scraped per compute (labelled
+    // `database=<name>`). Empty until an exporter is wired — the console shows a
+    // hint rather than breaking. These are the Performance-Insights-style signals.
+    let pgm = |m: &str| format!("pg_stat_database_{m}{{database=\"{name}\"}}");
+    let sql = |expr: String| -> Vec<Value> { prom_range(prom, &expr, start, end) };
+    let hit = format!("sum(rate({}[5m]))", pgm("blks_hit"));
+    let read = format!("sum(rate({}[5m]))", pgm("blks_read"));
     Ok(json!({
         "database": name,
         "window": 3600,
@@ -198,6 +205,16 @@ fn database_metrics(cfg: &ServeCfg, name: &str) -> Result<Value> {
             "active": series("active_connections", false),
             "computeUp": series("compute_up", false),
             "wakes": series("wakes_total", true),
+        },
+        "sql": {
+            "tps": sql(format!(
+                "sum(rate({}[5m])) + sum(rate({}[5m]))",
+                pgm("xact_commit"),
+                pgm("xact_rollback")
+            )),
+            "cacheHit": sql(format!("100 * {hit} / ({hit} + {read})")),
+            "backends": sql(format!("sum({})", pgm("numbackends"))),
+            "rows": sql(format!("sum(rate({}[5m]))", pgm("tup_fetched"))),
         },
     }))
 }
