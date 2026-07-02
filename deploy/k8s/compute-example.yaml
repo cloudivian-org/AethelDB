@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The AethelDB Authors
+#
+# Example per-tenant compute Deployment + Service for the AethelDB compute image.
+#
+# The proxy's Kubernetes activator scales a Deployment named `compute-<tenant>`
+# to 1 on a cold start and to 0 when idle, and — on a point-in-time restore —
+# patches the pod-template annotation `aethel.io/timeline`. The Downward API
+# surfaces that annotation as the AETHEL_TIMELINE env var, which the compute
+# entrypoint feeds to aethel_smgr — so a restore takes effect on the next wake.
+#
+# Replace <tenant>, the image, and the page-server / safekeeper addresses for
+# your cluster. This is a template, not applied by default.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compute-<tenant>
+spec:
+  replicas: 0 # scale-to-zero; the activator scales to 1 on demand
+  selector:
+    matchLabels: { app: compute-<tenant> }
+  template:
+    metadata:
+      labels: { app: compute-<tenant> }
+      annotations:
+        # Set/cleared by the proxy on a PITR restore; empty = the live root.
+        aethel.io/timeline: ""
+    spec:
+      containers:
+        - name: compute
+          image: ghcr.io/cloudivian-org/aetheldb/compute:latest
+          ports: [{ containerPort: 5432 }]
+          env:
+            - name: AETHEL_TENANT
+              value: "<tenant-id-32-hex>"
+            # The restored timeline, straight from the pod annotation.
+            - name: AETHEL_TIMELINE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['aethel.io/timeline']
+            - name: AETHEL_PAGESERVER_HOST
+              value: "aetheldb-pageserver"
+            - name: AETHEL_PAGESERVER_PORT
+              value: "6400"
+            - name: AETHEL_SAFEKEEPERS
+              value: "safekeeper1,safekeeper2,safekeeper3"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: compute-<tenant>
+spec:
+  selector: { app: compute-<tenant> }
+  ports: [{ port: 5432, targetPort: 5432 }]

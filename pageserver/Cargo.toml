@@ -57,3 +57,7 @@ tokio = { workspace = true }
 # End-to-end WAL-receiver test drives a real safekeeper. Dev-only; safekeeper
 # does not depend on pageserver, so there is no dependency cycle.
 safekeeper = { path = "../safekeeper" }
+
+[[bin]]
+name = "aethel-basebackup-import"
+path = "src/bin/aethel-basebackup-import.rs"

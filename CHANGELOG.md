@@ -12,6 +12,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Real compute boots from the page store** (base-image import): the patched
+  PostgreSQL compute (`aethel_smgr`) can now serve real reads from the page
+  server, not just a mock. A new `aethel-basebackup-import` tool seeds a timeline
+  from an `initdb`'d data directory (full-page images over the ingest port, at
+  LSN 0 — the LSN `aethel_smgr` requests as "latest"); an env-driven
+  `compute/entrypoint.sh` renders the compute config from the environment
+  (tenant / timeline / page server / safekeepers) and the Dockerfile runs it. The
+  Kubernetes compute example maps the `aethel.io/timeline` annotation to
+  `AETHEL_TIMELINE` (Downward API), so a **PITR restore takes effect in the real
+  compute**. Verified locally end-to-end (`compute/verify-local.sh`): a real
+  compute served 50 rows reconstructed from the page server. See `compute/README.md`
+  for the honest remaining gaps (compute-side basebackup-on-start, seed-at-provision).
 - **SQL-level metrics (Performance-Insights tier)**: the per-database Metrics view
   gains a **SQL · Postgres** section — transactions/sec, cache-hit ratio, active
   backends, and rows/sec — read from a `postgres_exporter` scraped per compute
