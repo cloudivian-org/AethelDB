@@ -94,8 +94,9 @@ came to us for.
 - **Compute autoscaling** (Aurora-Serverless-v2-style sizing, on top of
   scale-to-zero).
 - **Multi-region** async layer replication for DR.
-- **Compute timeline pinning** so an in-place PITR restore takes effect
-  automatically (the activator starts compute on the restored timeline).
+- ~~**Compute timeline pinning** so an in-place PITR restore takes effect
+  automatically~~ — **shipped**: the activator starts compute on the restored
+  timeline (`{timeline}` / `aethel.io/timeline`).
 
 **Productization**
 - **Per-database metrics & lineage** (the observability plan above).

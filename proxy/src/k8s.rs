@@ -73,11 +73,37 @@ impl KubeActivator {
         info!(tenant, deployment = %name, replicas, "scaled compute Deployment");
         Ok(())
     }
+
+    /// Pin the compute pod template to a restored `timeline` (or clear it with
+    /// `None`) via the `aethel.io/timeline` annotation. A compute Deployment can
+    /// surface that annotation as an env var through the Downward API and start
+    /// Postgres against that timeline; patching the template also rolls the pod so
+    /// the change takes effect. `None` clears the annotation (serve the live
+    /// root), leaving a normal (non-restored) wake unchanged.
+    async fn pin_timeline(&self, tenant: &str, timeline: Option<&str>) -> anyhow::Result<()> {
+        let name = render_name(&self.name_template, tenant);
+        let api: Api<Deployment> = Api::namespaced(self.client.clone(), &self.namespace);
+        // `null` removes the annotation (unpin); a string sets it (pin).
+        let value: serde_json::Value = timeline.map(Into::into).unwrap_or(serde_json::Value::Null);
+        let patch = serde_json::json!({
+            "spec": { "template": { "metadata": { "annotations": { "aethel.io/timeline": value } } } }
+        });
+        api.patch(&name, &PatchParams::default(), &Patch::Merge(&patch))
+            .await
+            .map_err(|e| anyhow::anyhow!("pinning timeline on deployment {name}: {e}"))?;
+        info!(tenant, deployment = %name, timeline = timeline.unwrap_or("(live)"), "pinned compute timeline");
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl Activator for KubeActivator {
-    async fn start(&self, tenant: &str) -> anyhow::Result<()> {
+    async fn start(&self, tenant: &str, timeline: Option<&str>) -> anyhow::Result<()> {
+        // Only touch the pod template when a restore actually pinned a timeline,
+        // so ordinary wakes keep their existing single-scale behavior.
+        if timeline.is_some() {
+            self.pin_timeline(tenant, timeline).await?;
+        }
         self.scale(tenant, 1).await
     }
 
@@ -190,7 +216,7 @@ mod tests {
 
         let replicas = |d: &Deployment| d.spec.as_ref().and_then(|s| s.replicas);
 
-        activator.start("shop").await.expect("start should scale up");
+        activator.start("shop", None).await.expect("start should scale up");
         assert_eq!(
             replicas(&api.get("compute-shop").await.unwrap()),
             Some(1),
@@ -211,7 +237,7 @@ mod tests {
         let config = Config::new(format!("http://{addr}").parse().unwrap());
         let activator = KubeActivator::from_config(config, "aetheldb", "compute-{tenant}").unwrap();
 
-        activator.start("shop").await.expect("start should scale up");
+        activator.start("shop", None).await.expect("start should scale up");
 
         // Find the PATCH to the deployment's scale subresource (the path may
         // carry a trailing empty query string).

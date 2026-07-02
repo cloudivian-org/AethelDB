@@ -39,7 +39,7 @@ struct RecordingActivator {
 
 #[async_trait]
 impl Activator for RecordingActivator {
-    async fn start(&self, _tenant: &str) -> anyhow::Result<()> {
+    async fn start(&self, _tenant: &str, _timeline: Option<&str>) -> anyhow::Result<()> {
         self.started.store(true, Ordering::SeqCst);
         Ok(())
     }

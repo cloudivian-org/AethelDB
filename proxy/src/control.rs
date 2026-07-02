@@ -16,6 +16,8 @@
 //! * `DELETE /tenants/<name>`           — deregister a route
 //! * `POST   /tenants/<name>/start`     — wake compute
 //! * `POST   /tenants/<name>/stop`      — hibernate (scale to zero)
+//! * `POST   /tenants/<name>/pin/<tl>`  — pin compute to a restored timeline
+//! * `POST   /tenants/<name>/unpin`     — clear the pin (serve the live root)
 
 use std::sync::Arc;
 
@@ -87,15 +89,27 @@ async fn handle(proxy: Arc<Proxy>, tmpl: Arc<String>, mut socket: TcpStream) -> 
 
 async fn route(proxy: &Arc<Proxy>, tmpl: &str, method: &str, path: &str) -> (u16, String) {
     let segs: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
-    match (method, segs.first().copied(), segs.get(1).copied(), segs.get(2).copied()) {
-        ("GET", Some("healthz"), None, None) => (200, r#"{"status":"ok"}"#.to_string()),
-        ("GET", Some("tenants"), None, None) => (200, list_tenants(proxy)),
-        ("POST", Some("tenants"), Some(name), None) => register(proxy, tmpl, name),
-        ("DELETE", Some("tenants"), Some(name), None) => deregister(proxy, name),
-        ("POST", Some("tenants"), Some(name), Some(action))
+    match (
+        method,
+        segs.first().copied(),
+        segs.get(1).copied(),
+        segs.get(2).copied(),
+        segs.get(3).copied(),
+    ) {
+        ("GET", Some("healthz"), None, None, None) => (200, r#"{"status":"ok"}"#.to_string()),
+        ("GET", Some("tenants"), None, None, None) => (200, list_tenants(proxy)),
+        ("POST", Some("tenants"), Some(name), None, None) => register(proxy, tmpl, name),
+        ("DELETE", Some("tenants"), Some(name), None, None) => deregister(proxy, name),
+        ("POST", Some("tenants"), Some(name), Some(action), None)
             if action == "start" || action == "stop" =>
         {
             set_compute(proxy, name, action == "start").await
+        }
+        ("POST", Some("tenants"), Some(name), Some("pin"), Some(tl)) => {
+            set_pin(proxy, name, Some(tl)).await
+        }
+        ("POST", Some("tenants"), Some(name), Some("unpin"), None) => {
+            set_pin(proxy, name, None).await
         }
         _ => (404, r#"{"error":"not found"}"#.to_string()),
     }
@@ -151,7 +165,8 @@ async fn set_compute(proxy: &Arc<Proxy>, name: &str, start: bool) -> (u16, Strin
         return (404, format!(r#"{{"error":"unknown tenant {name}"}}"#));
     };
     let result = if start {
-        proxy.activator().start(name).await
+        let pin = state.pinned_timeline();
+        proxy.activator().start(name, pin.as_deref()).await
     } else {
         proxy.activator().stop(name).await
     };
@@ -167,6 +182,27 @@ async fn set_compute(proxy: &Arc<Proxy>, name: &str, start: bool) -> (u16, Strin
         }
         Err(e) => (502, format!(r#"{{"error":{}}}"#, json_str(&format!("{e:#}")))),
     }
+}
+
+/// Pin (or, with `None`, unpin) a tenant's compute timeline after a point-in-time
+/// restore, then hibernate it so the next connection wakes serving from that
+/// timeline. Best-effort hibernate: an unmanaged/Noop activator just records the
+/// pin, which the next start still applies.
+async fn set_pin(proxy: &Arc<Proxy>, name: &str, timeline: Option<&str>) -> (u16, String) {
+    let Some(state) = proxy.registry().get(name) else {
+        return (404, format!(r#"{{"error":"unknown tenant {name}"}}"#));
+    };
+    state.set_pinned_timeline(timeline.map(str::to_owned));
+    // Bounce compute to zero so the pin takes effect on the next wake.
+    let _ = proxy.activator().stop(name).await;
+    state.set_running(false);
+    crate::metrics::set_compute_up(name, false);
+    debug!(tenant = name, timeline = timeline.unwrap_or("(live)"), "pinned compute timeline");
+    let pinned = match timeline {
+        Some(tl) => json_str(tl),
+        None => "null".to_string(),
+    };
+    (200, format!(r#"{{"tenant":{},"pinned":{}}}"#, json_str(name), pinned))
 }
 
 /// Minimal JSON string escaping (quotes + backslashes).

@@ -29,6 +29,10 @@ pub struct TenantState {
     /// Optional SCRAM verifier: when present, the proxy authenticates the client
     /// against it before waking compute.
     scram: Option<crate::scram::ScramSecret>,
+    /// Timeline the tenant's compute should serve from (`None` = the live root).
+    /// Set by a point-in-time restore; passed to the activator so compute comes
+    /// up pinned to that timeline on the next start.
+    pinned_timeline: Mutex<Option<String>>,
 }
 
 impl TenantState {
@@ -40,6 +44,7 @@ impl TenantState {
             active_conns: AtomicU64::new(0),
             last_active: Mutex::new(Instant::now()),
             scram: None,
+            pinned_timeline: Mutex::new(None),
         }
     }
 
@@ -70,6 +75,18 @@ impl TenantState {
     /// Record the believed running state of compute.
     pub fn set_running(&self, running: bool) {
         self.running.store(running, Ordering::Release);
+    }
+
+    /// The timeline compute should be pinned to, if a restore set one.
+    pub fn pinned_timeline(&self) -> Option<String> {
+        self.pinned_timeline.lock().expect("pinned_timeline poisoned").clone()
+    }
+
+    /// Pin (or, with `None`, unpin) the timeline compute serves from. Takes effect
+    /// on the next start — the caller typically hibernates compute so the next
+    /// wake comes up pinned.
+    pub fn set_pinned_timeline(&self, timeline: Option<String>) {
+        *self.pinned_timeline.lock().expect("pinned_timeline poisoned") = timeline;
     }
 
     /// Current number of in-flight connections.
