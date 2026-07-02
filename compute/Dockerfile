@@ -89,15 +89,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --create-home --home-dir /var/lib/postgresql postgres
 
 COPY --from=builder /usr/local/pgsql /usr/local/pgsql
-# Default compute-node configuration (network smgr + WAL streaming).
+# Default compute-node configuration (network smgr + WAL streaming) + the
+# environment-driven bootstrap entrypoint.
 COPY postgresql.compute.conf /usr/local/pgsql/share/postgresql.compute.conf
+COPY entrypoint.sh /usr/local/bin/aethel-compute-entrypoint
 ENV PATH="/usr/local/pgsql/bin:${PATH}"
 ENV PGDATA="/var/lib/postgresql/data"
 
 USER postgres
 WORKDIR /var/lib/postgresql
 
-# The proxy (Step 2) starts and stops these containers; the default command is a
-# placeholder entrypoint that Step 3 replaces with the network-storage bootstrap.
+# The activator starts/stops these containers. The entrypoint renders the compute
+# config from the environment (tenant / timeline / page server / safekeepers) and
+# execs postgres — reads are served by the page server via aethel_smgr.
 EXPOSE 5432
-CMD ["postgres", "--version"]
+ENTRYPOINT ["/usr/local/bin/aethel-compute-entrypoint"]

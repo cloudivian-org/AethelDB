@@ -20,3 +20,9 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# aethel_smgr PGXS build outputs (built by compute/verify-local.sh / make)
+compute/extension/aethel_smgr/*.o
+compute/extension/aethel_smgr/*.so
+compute/extension/aethel_smgr/*.dylib
+compute/extension/aethel_smgr/*.bc

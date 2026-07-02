@@ -93,10 +93,15 @@ came to us for.
 ## Gap-list to world-class (prioritized)
 
 **Engine durability & scale**
+- **Real compute image**: the patched Postgres + `aethel_smgr` now **boots and
+  serves real reads from the page store** after a base-image import
+  (`aethel-basebackup-import`), verified locally. Remaining: compute-side
+  basebackup-on-start (fully stateless wake) and seed-at-provision — see
+  `compute/README.md`.
 - **Cold-start latency**: opt-in **keep-warm** (zero cold start for chosen
   databases) is **shipped** — *avoidance*. Making the boot itself faster
-  (snapshot/restore, working-set prefetch) needs the real compute image and is
-  not yet built.
+  (snapshot/restore, working-set prefetch) builds on the real compute image and
+  is not yet built.
 - **Page-data rehydration on restart** (catalog already restores topology; reload
   a timeline's pages from object-store layers). *Closes the durability story.*
 - **Read replicas** (multiple read-only computes off one timeline).
