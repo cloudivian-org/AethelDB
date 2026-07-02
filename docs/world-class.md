@@ -88,6 +88,10 @@ came to us for.
 ## Gap-list to world-class (prioritized)
 
 **Engine durability & scale**
+- **Cold-start latency**: opt-in **keep-warm** (zero cold start for chosen
+  databases) is **shipped** — *avoidance*. Making the boot itself faster
+  (snapshot/restore, working-set prefetch) needs the real compute image and is
+  not yet built.
 - **Page-data rehydration on restart** (catalog already restores topology; reload
   a timeline's pages from object-store layers). *Closes the durability story.*
 - **Read replicas** (multiple read-only computes off one timeline).

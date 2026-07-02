@@ -31,6 +31,37 @@ pub async fn run(proxy: Arc<Proxy>, config: ReaperConfig) {
     loop {
         ticker.tick().await;
         reap_once(&proxy, config.idle_after).await;
+        warm_once(&proxy).await;
+    }
+}
+
+/// A single warmer pass: start any **keep-warm** tenant whose compute isn't
+/// running, so a latency-sensitive database never pays a cold start. A no-op
+/// unless a tenant has been marked keep-warm, so default behavior is unchanged.
+pub async fn warm_once(proxy: &Arc<Proxy>) {
+    let cold: Vec<(String, Arc<crate::tenant::TenantState>)> = proxy
+        .registry()
+        .tenants()
+        .into_iter()
+        .filter(|(_, state)| state.keep_warm() && !state.is_running())
+        .collect();
+
+    for (name, state) in cold {
+        // Re-check: a connection may have already woken it since collection.
+        if state.is_running() || !state.keep_warm() {
+            continue;
+        }
+        info!(tenant = %name, "keep-warm: starting compute");
+        match proxy.activator().start(&name, state.pinned_timeline().as_deref()).await {
+            Ok(()) => {
+                state.set_running(true);
+                state.touch();
+                crate::metrics::set_compute_up(&name, true);
+            }
+            Err(err) => {
+                warn!(tenant = %name, error = %format!("{err:#}"), "keep-warm start failed")
+            }
+        }
     }
 }
 
@@ -88,5 +119,50 @@ mod tests {
 
         assert!(!registry.get("idle").unwrap().is_running(), "idle tenant should be stopped");
         assert!(registry.get("busy").unwrap().is_running(), "busy tenant must stay running");
+    }
+
+    #[tokio::test]
+    async fn keep_warm_tenant_survives_reaping() {
+        let registry = Arc::new(Registry::from_iter([(
+            "hot".to_string(),
+            TenantState::new("127.0.0.1:5432", true),
+        )]));
+        registry.get("hot").unwrap().set_keep_warm(true);
+        let proxy = Proxy::new(registry.clone(), Arc::new(NoopActivator), HealthConfig::default());
+
+        // Even fully idle, a keep-warm tenant must not be scaled to zero.
+        reap_once(&proxy, Duration::ZERO).await;
+        assert!(registry.get("hot").unwrap().is_running(), "keep-warm tenant must stay running");
+    }
+
+    #[tokio::test]
+    async fn warmer_restarts_a_cold_keep_warm_tenant() {
+        let registry = Arc::new(Registry::from_iter([(
+            "hot".to_string(),
+            TenantState::new("127.0.0.1:5432", false), // starts cold
+        )]));
+        registry.get("hot").unwrap().set_keep_warm(true);
+        let proxy = Proxy::new(registry.clone(), Arc::new(NoopActivator), HealthConfig::default());
+
+        warm_once(&proxy).await;
+        assert!(
+            registry.get("hot").unwrap().is_running(),
+            "warmer should start a keep-warm tenant"
+        );
+    }
+
+    #[tokio::test]
+    async fn warmer_leaves_ordinary_tenants_cold() {
+        let registry = Arc::new(Registry::from_iter([(
+            "dev".to_string(),
+            TenantState::new("127.0.0.1:5432", false),
+        )]));
+        let proxy = Proxy::new(registry.clone(), Arc::new(NoopActivator), HealthConfig::default());
+
+        warm_once(&proxy).await;
+        assert!(
+            !registry.get("dev").unwrap().is_running(),
+            "non-warm tenant must stay scaled to zero"
+        );
     }
 }

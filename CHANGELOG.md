@@ -12,6 +12,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Opt-in keep-warm (zero cold start for chosen databases)**: mark a
+  latency-sensitive database **keep-warm** and it is exempt from scale-to-zero —
+  the idle reaper skips it and a background warmer keeps its compute started, so
+  it never pays a cold start. Everything else keeps scaling to zero. New control
+  routes `POST /tenants/<name>/keepwarm` and `/nokeepwarm`, a per-database toggle
+  in the console, and a `keepWarm` flag in the tenant/database listings. Off by
+  default — existing scale-to-zero behavior is unchanged. (This is cold-start
+  *avoidance*; making the boot itself faster — snapshot/restore, working-set
+  prefetch — needs the real compute image and is still on the roadmap.)
 - **Compute timeline-pinning (PITR takes effect end-to-end)**: a point-in-time
   restore now **pins the database's compute to the restored timeline**. The proxy
   records the pin, hibernates compute, and passes the timeline to the activator on

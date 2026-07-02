@@ -230,6 +230,11 @@ async function loadDatabases() {
     let life = '';
     if (ctl && c === 'running') life = `<button class="btn sm" onclick="dbAction('${n}','stop')">Hibernate</button>`;
     else if (ctl && c === 'hibernated') life = `<button class="btn sm" onclick="dbAction('${n}','start')">Start</button>`;
+    let warm = '';
+    if (ctl && c !== 'unmanaged') warm = d.keepWarm
+      ? `<button class="btn sm" title="Re-enable scale-to-zero" onclick="dbWarm('${n}',false)">⚡ Keep-warm: on</button>`
+      : `<button class="btn sm" title="Never scale to zero — no cold start" onclick="dbWarm('${n}',true)">Keep warm</button>`;
+    const warmBadge = d.keepWarm ? `<span class="badge" style="background:rgba(217,119,6,.14);color:var(--amber)">⚡ warm</span>` : '';
     const serving = (d.current && d.current !== 'live')
       ? `<span class="badge" style="background:rgba(217,119,6,.14);color:var(--amber)">⟲ restored: ${d.current}</span>` : '';
     const rps = (d.branches || []);
@@ -240,7 +245,7 @@ async function loadDatabases() {
       ${(d.current && d.current !== 'live') ? `<div style="margin-top:6px"><button class="btn sm" onclick="restoreDb('${n}','live')">↩ Restore to live</button></div>` : ''}
       </div>` : '';
     return `<div class="dbcard">
-      <div class="dbhead"><b>${n}</b>${pill}${serving}<span style="flex:1"></span>${life}</div>
+      <div class="dbhead"><b>${n}</b>${pill}${warmBadge}${serving}<span style="flex:1"></span>${warm}${life}</div>
       <div class="connrow"><code>${d.connection}</code><button class="btn sm" onclick="copyText('${d.connection}')">Copy</button></div>
       <div class="row" style="margin-top:10px">
         <button class="btn sm" onclick="openMetrics('${n}')">📈 Metrics</button>
@@ -337,6 +342,10 @@ async function deleteDatabase(name) {
 }
 async function dbAction(name, action) {
   try { await api("POST", `/api/databases/${name}/${action}`); toast(`${name}: ${action === 'start' ? 'starting' : 'hibernating'}`, "ok"); setTimeout(()=>{loadDatabases(); refreshAll();}, 400); }
+  catch (e) { toast(e.message, "err"); }
+}
+async function dbWarm(name, on) {
+  try { await api("POST", `/api/databases/${name}/${on ? 'keepwarm' : 'nokeepwarm'}`); toast(on ? `${name}: keep-warm on (no cold start)` : `${name}: scale-to-zero re-enabled`, "ok"); setTimeout(()=>{loadDatabases(); refreshAll();}, 400); }
   catch (e) { toast(e.message, "err"); }
 }
 async function createDatabase() {

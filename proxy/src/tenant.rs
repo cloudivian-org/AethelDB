@@ -33,6 +33,10 @@ pub struct TenantState {
     /// Set by a point-in-time restore; passed to the activator so compute comes
     /// up pinned to that timeline on the next start.
     pinned_timeline: Mutex<Option<String>>,
+    /// When set, this tenant is exempt from idle reaping and a background warmer
+    /// keeps its compute started — trading a little always-on cost for **zero
+    /// cold start** on a latency-sensitive database. Off by default.
+    keep_warm: AtomicBool,
 }
 
 impl TenantState {
@@ -45,6 +49,7 @@ impl TenantState {
             last_active: Mutex::new(Instant::now()),
             scram: None,
             pinned_timeline: Mutex::new(None),
+            keep_warm: AtomicBool::new(false),
         }
     }
 
@@ -117,10 +122,24 @@ impl TenantState {
         self.last_active.lock().expect("last_active poisoned").elapsed()
     }
 
-    /// True when compute is running, no connections are open, and the idle
-    /// threshold has elapsed — i.e. it is safe to scale this tenant to zero.
+    /// Whether this tenant is kept warm (exempt from scale-to-zero).
+    pub fn keep_warm(&self) -> bool {
+        self.keep_warm.load(Ordering::Acquire)
+    }
+
+    /// Set (or clear) the keep-warm exemption.
+    pub fn set_keep_warm(&self, keep_warm: bool) {
+        self.keep_warm.store(keep_warm, Ordering::Release);
+    }
+
+    /// True when compute is running, no connections are open, the idle threshold
+    /// has elapsed, and the tenant is not kept warm — i.e. it is safe to scale
+    /// this tenant to zero.
     pub fn is_reapable(&self, idle_threshold: Duration) -> bool {
-        self.is_running() && self.active_conns() == 0 && self.idle_for() >= idle_threshold
+        self.is_running()
+            && !self.keep_warm()
+            && self.active_conns() == 0
+            && self.idle_for() >= idle_threshold
     }
 }
 
