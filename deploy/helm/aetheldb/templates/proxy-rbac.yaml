@@ -14,10 +14,12 @@ metadata:
   labels:
     {{- include "aetheldb.labels" . | nindent 4 }}
 rules:
-  # The scale-to-zero activator scales per-tenant compute Deployments.
+  # The scale-to-zero activator scales per-tenant compute Deployments; `patch` on
+  # deployments also lets a point-in-time restore pin the compute pod template to
+  # a timeline (the `aethel.io/timeline` annotation).
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["apps"]
     resources: ["deployments/scale"]
     verbs: ["get", "patch", "update"]

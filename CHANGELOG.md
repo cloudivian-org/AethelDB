@@ -12,6 +12,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Compute timeline-pinning (PITR takes effect end-to-end)**: a point-in-time
+  restore now **pins the database's compute to the restored timeline**. The proxy
+  records the pin, hibernates compute, and passes the timeline to the activator on
+  the next wake — `{timeline}` in a `CommandActivator` template, or the
+  `aethel.io/timeline` pod annotation for the Kubernetes activator. New control
+  routes `POST /tenants/<name>/pin/<tl>` and `/unpin`; the console's **Restore**
+  wires them automatically. Non-restored tenants are unchanged (timeline `None`),
+  so existing behavior is preserved.
 - **Per-database metrics & charts** in the console: each database has a **📈
   Metrics** view with tiles (active now, peak, connections/cold-starts in the
   last hour) and native sparklines (connections/sec, active, compute up-vs-

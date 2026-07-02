@@ -96,7 +96,7 @@ fn route(
                 return api(branch_database(client, cfg, name, body));
             }
             if let Some(name) = rest.strip_suffix("/restore") {
-                return api(restore_database(name, body));
+                return api(restore_database(cfg, name, body));
             }
         }
     }
@@ -313,16 +313,32 @@ fn branch_database(client: &Client, _cfg: &ServeCfg, name: &str, body: &str) -> 
     Ok(json!({ "database": name, "branch": branch, "timeline": timeline, "lsn": lsn }))
 }
 
-/// Restore a database to a restore point (or back to live). Sets the timeline the
-/// database serves from; the activator pins compute to it on next start.
-fn restore_database(name: &str, body: &str) -> Result<Value> {
+/// Restore a database to a restore point (or back to live). Records the timeline
+/// locally and **pins compute to it on the proxy** (which hibernates the database
+/// so the next connection wakes serving from that timeline) — so an in-place
+/// restore takes effect end-to-end, not just as a recorded intent.
+fn restore_database(cfg: &ServeCfg, name: &str, body: &str) -> Result<Value> {
     let timeline = parse(body)
         .get("timeline")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty() && *s != "live")
         .map(str::to_owned);
     databases::set_current(name, timeline.clone())?;
+    proxy_pin(cfg, name, timeline.as_deref()); // best-effort end-to-end effect
     Ok(json!({ "database": name, "current": timeline }))
+}
+
+/// Pin (`Some`) or unpin (`None`) a database's compute timeline on the proxy so a
+/// restore takes effect on the next wake. Best-effort — a no-op without a proxy.
+fn proxy_pin(cfg: &ServeCfg, name: &str, timeline: Option<&str>) {
+    if let Some(base) = &cfg.proxy_url {
+        let base = base.trim_end_matches('/');
+        let url = match timeline {
+            Some(tl) => format!("{base}/tenants/{name}/pin/{tl}"),
+            None => format!("{base}/tenants/{name}/unpin"),
+        };
+        let _ = ureq::post(&url).call();
+    }
 }
 
 /// Register (`add = true`) or deregister a tenant route on the proxy. Best-effort

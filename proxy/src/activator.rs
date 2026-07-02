@@ -23,7 +23,11 @@ pub trait Activator: Send + Sync {
     /// Ensure the named tenant's compute node is starting. Should return once
     /// the launch has been *triggered*; readiness is confirmed separately by
     /// [`wait_until_ready`].
-    async fn start(&self, tenant: &str) -> anyhow::Result<()>;
+    ///
+    /// `timeline`, when `Some`, is the timeline the compute should serve from —
+    /// set by a point-in-time restore. `None` (the default) means the live root,
+    /// preserving the original behavior for every non-restored tenant.
+    async fn start(&self, tenant: &str, timeline: Option<&str>) -> anyhow::Result<()>;
 
     /// Scale the named tenant's compute node to zero.
     async fn stop(&self, tenant: &str) -> anyhow::Result<()>;
@@ -33,9 +37,11 @@ pub trait Activator: Send + Sync {
 ///
 /// The literal token `{tenant}` in either template is replaced with the tenant
 /// name before execution, e.g. `docker start pg-{tenant}` or
-/// `./scripts/wake.sh {tenant}`. Commands run via `sh -c` so operators can use
-/// shell features; in production you would prefer a structured Docker/API call,
-/// which is exactly what a different `Activator` impl would provide.
+/// `./scripts/wake.sh {tenant}`. The `start` template may also use `{timeline}`,
+/// replaced with the pinned timeline from a point-in-time restore (empty when
+/// none). Commands run via `sh -c` so operators can use shell features; in
+/// production you would prefer a structured Docker/API call, which is exactly
+/// what a different `Activator` impl would provide.
 #[derive(Debug, Clone)]
 pub struct CommandActivator {
     start_template: String,
@@ -51,9 +57,16 @@ impl CommandActivator {
         }
     }
 
-    /// Substitute `{tenant}` and run a command, surfacing a non-zero exit as an error.
-    async fn run(&self, template: &str, tenant: &str) -> anyhow::Result<()> {
-        let rendered = template.replace("{tenant}", tenant);
+    /// Substitute `{tenant}`/`{timeline}` and run a command, surfacing a non-zero
+    /// exit as an error.
+    async fn run(
+        &self,
+        template: &str,
+        tenant: &str,
+        timeline: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let rendered =
+            template.replace("{tenant}", tenant).replace("{timeline}", timeline.unwrap_or(""));
         debug!(tenant, command = %rendered, "running activator command");
         let status = Command::new("sh").arg("-c").arg(&rendered).status().await?;
         if !status.success() {
@@ -65,12 +78,12 @@ impl CommandActivator {
 
 #[async_trait]
 impl Activator for CommandActivator {
-    async fn start(&self, tenant: &str) -> anyhow::Result<()> {
-        self.run(&self.start_template.clone(), tenant).await
+    async fn start(&self, tenant: &str, timeline: Option<&str>) -> anyhow::Result<()> {
+        self.run(&self.start_template.clone(), tenant, timeline).await
     }
 
     async fn stop(&self, tenant: &str) -> anyhow::Result<()> {
-        self.run(&self.stop_template.clone(), tenant).await
+        self.run(&self.stop_template.clone(), tenant, None).await
     }
 }
 
@@ -81,7 +94,7 @@ pub struct NoopActivator;
 
 #[async_trait]
 impl Activator for NoopActivator {
-    async fn start(&self, tenant: &str) -> anyhow::Result<()> {
+    async fn start(&self, tenant: &str, _timeline: Option<&str>) -> anyhow::Result<()> {
         debug!(tenant, "noop activator: start ignored");
         Ok(())
     }
@@ -134,7 +147,7 @@ mod tests {
     #[tokio::test]
     async fn command_activator_succeeds_and_reports_failure() {
         let act = CommandActivator::new("true", "false");
-        assert!(act.start("t").await.is_ok());
+        assert!(act.start("t", None).await.is_ok());
         // `false` exits non-zero -> stop must surface an error.
         assert!(act.stop("t").await.is_err());
     }
@@ -143,8 +156,19 @@ mod tests {
     async fn command_activator_substitutes_tenant() {
         // Succeeds only if {tenant} expanded to "shop"; `[ x = y ]` exits 1 otherwise.
         let act = CommandActivator::new("[ {tenant} = shop ]", "true");
-        assert!(act.start("shop").await.is_ok());
-        assert!(act.start("other").await.is_err());
+        assert!(act.start("shop", None).await.is_ok());
+        assert!(act.start("other", None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn command_activator_substitutes_pinned_timeline() {
+        // {timeline} expands to the pin; empty when None (preserving old behavior).
+        let act = CommandActivator::new("[ \"{timeline}\" = abc123 ]", "true");
+        assert!(act.start("shop", Some("abc123")).await.is_ok());
+        assert!(act.start("shop", None).await.is_err());
+        // A template with no {timeline} is unaffected by a pin.
+        let plain = CommandActivator::new("[ {tenant} = shop ]", "true");
+        assert!(plain.start("shop", Some("abc123")).await.is_ok());
     }
 
     #[tokio::test]

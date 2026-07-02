@@ -338,8 +338,10 @@ impl Proxy {
             info!(tenant, "cold start: triggering activator");
             crate::metrics::WAKES.inc();
             crate::metrics::DB_WAKES.with_label_values(&[tenant]).inc();
+            // Pass any restore-pinned timeline so compute wakes serving from it.
+            let pin = state.pinned_timeline();
             self.activator
-                .start(tenant)
+                .start(tenant, pin.as_deref())
                 .await
                 .with_context(|| format!("activator failed to start tenant {tenant}"))?;
         }

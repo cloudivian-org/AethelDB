@@ -15,9 +15,12 @@ kind: Role
 metadata:
   name: aethel-proxy-activator
 rules:
+  # `patch` on deployments is needed to pin a restored timeline onto the compute
+  # pod template (the `aethel.io/timeline` annotation); scale-to-zero uses the
+  # scale subresource below.
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["apps"]
     resources: ["deployments/scale"]
     verbs: ["get", "patch", "update"]
